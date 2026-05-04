@@ -8,12 +8,12 @@ mgr = UserManager(client=client)
 id1 = mgr.add_user("Alice", role="admin", email="alice@example.com")
 id2 = mgr.add_user("Bob",   role="viewer")
 id3 = mgr.add_user("Carol")
-
-print(f"Created: {id1}, {id2}, {id3}")
+id4 = mgr.add_user("Pankaj")
+print(f"Created: {id1}, {id2}, {id3}, {id4}")
 print()
 
 # Fetch by ID
-print("Get by ID:", mgr.get_user_by_id(id1))
+print("Get by ID:", mgr.get_user_by_id(id4))
 print()
 
 # List all
