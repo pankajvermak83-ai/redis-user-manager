@@ -4,5 +4,7 @@
     },
     "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
     "python.terminal.executeInFileDir": true,
-    "debugpy.debugJustMyCode": true
+    "debugpy.debugJustMyCode": true,
+    "python.terminal.launchArgs": ["-u"],
+    "terminal.integrated.clearBeforeReuse": true
 }
