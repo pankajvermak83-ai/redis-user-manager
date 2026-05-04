@@ -1,0 +1,6 @@
+{
+    "files.exclude": {
+        ".claude": true
+    },
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+}
