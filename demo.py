@@ -1,5 +1,8 @@
+import subprocess
 import fakeredis
 from user_manager import UserManager
+
+subprocess.run('cls', shell=True)
 
 client = fakeredis.FakeRedis(decode_responses=True)
 mgr = UserManager(client=client)
