@@ -1,7 +1,7 @@
 import unittest
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-import tests.conftest  # noqa: F401 — installs redis stub
+import test1.conftest  # noqa: F401 — installs redis stub
 
 from user_manager.exceptions import (
     UserManagerError,

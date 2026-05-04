@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-import tests.conftest  # noqa: F401
+import test1.conftest  # noqa: F401
 
 from user_manager.exceptions import UserManagerError
 from user_manager import id_generator

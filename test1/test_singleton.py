@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-import tests.conftest  # noqa: F401
+import test1.conftest  # noqa: F401
 
 import user_manager.singleton as sg
 from user_manager.service import UserManager
