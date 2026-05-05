@@ -5,7 +5,7 @@
             "name": "Run Python File",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}\\demo1.py",
             "console": "integratedTerminal",
             "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
             "cwd": "${workspaceFolder}",
