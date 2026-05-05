@@ -36,8 +36,12 @@ if args.command == "add":
         print(f"Created — ID: {user_id}, Name: {name}")
 
 elif args.command == "get":
-    user = mgr.get_user_by_id(args.user_id)
-    print("User found:", user)
+    try:
+        user = mgr.get_user_by_id(args.user_id)
+        print("User found:", user)
+    except Exception as e:
+        print(f"Error: {e}")
+        print("Note: fakeredis is in-memory. Use 'demo' command to add and get in one run.")
 
 elif args.command == "list":
     users = mgr.get_all_users()
