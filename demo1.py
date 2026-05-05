@@ -5,9 +5,6 @@ from user_manager import UserManager
 
 subprocess.run('cls', shell=True)
 
-client = fakeredis.FakeRedis(decode_responses=True)
-mgr = UserManager(client=client)
-
 parser = argparse.ArgumentParser(description="Redis User Manager CLI")
 subparsers = parser.add_subparsers(dest="command")
 
@@ -24,10 +21,20 @@ get_parser.add_argument("user_id", help="User ID to look up")
 # list command
 subparsers.add_parser("list", help="List all users")
 
-# demo command — adds sample users and lists them
+# demo command
 subparsers.add_parser("demo", help="Add sample users and list all")
 
 args = parser.parse_args()
+
+client = fakeredis.FakeRedis(decode_responses=True)
+mgr = UserManager(client=client)
+
+# Seed users for all commands except demo (demo seeds its own)
+if args.command != "demo":
+    _id_pankaj = mgr.add_user("Pankaj", role="admin", email="pankaj@example.com")
+    _id_alice  = mgr.add_user("Alice",  role="viewer")
+    _id_bob    = mgr.add_user("Bob")
+    print(f"[Seeded] Pankaj={_id_pankaj}  Alice={_id_alice}  Bob={_id_bob}\n")
 
 if args.command == "add":
     for name in args.names:
@@ -41,15 +48,12 @@ elif args.command == "get":
         print("User found:", user)
     except Exception as e:
         print(f"Error: {e}")
-        print("Note: fakeredis is in-memory. Use 'demo' command to add and get in one run.")
+        print("Tip: Use the ID shown in [Seeded] line above.")
 
 elif args.command == "list":
     users = mgr.get_all_users()
-    if users:
-        for u in users:
-            print(u)
-    else:
-        print("No users found.")
+    for u in users:
+        print(u)
 
 elif args.command == "demo":
     id1 = mgr.add_user("Pankaj", role="admin", email="pankaj@example.com")
