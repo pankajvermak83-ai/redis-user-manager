@@ -1,3 +1,33 @@
+# =============================================================================
+# Redis User Manager — demo1.py
+# Run from VS Code terminal: .venv\Scripts\python.exe demo1.py <command>
+#
+# TEST 1: No arguments — shows help
+#   .venv\Scripts\python.exe demo1.py
+#
+# TEST 2: Full demo — add, get, list in one run
+#   .venv\Scripts\python.exe demo1.py demo
+#
+# TEST 3: List seeded users
+#   .venv\Scripts\python.exe demo1.py list
+#
+# TEST 4: Add single user with role and email
+#   .venv\Scripts\python.exe demo1.py add "Carol" --role manager --email carol@example.com
+#
+# TEST 5: Add multiple users at once
+#   .venv\Scripts\python.exe demo1.py add "Dave" "Eve" --role viewer
+#
+# TEST 6: Get user by ID (copy ID from [Seeded] line after running list)
+#   .venv\Scripts\python.exe demo1.py list
+#   .venv\Scripts\python.exe demo1.py get PA12345
+#
+# TEST 7: Get with invalid ID — shows friendly error
+#   .venv\Scripts\python.exe demo1.py get INVALID123
+#
+# TEST 8: Duplicate user — should be blocked
+#   .venv\Scripts\python.exe demo1.py add "Pankaj"
+# =============================================================================
+
 import subprocess
 import argparse
 import fakeredis
