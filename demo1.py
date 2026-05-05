@@ -69,8 +69,11 @@ if args.command != "demo":
 if args.command == "add":
     for name in args.names:
         extras = {k: v for k, v in [("role", args.role), ("email", args.email)] if v}
-        user_id = mgr.add_user(name, **extras)
-        print(f"Created — ID: {user_id}, Name: {name}")
+        try:
+            user_id = mgr.add_user(name, **extras)
+            print(f"Created — ID: {user_id}, Name: {name}")
+        except Exception as e:
+            print(f"Blocked — {name}: {e}")
 
 elif args.command == "get":
     try:
