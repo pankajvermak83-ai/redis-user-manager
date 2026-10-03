@@ -1,0 +1,14 @@
+[
+  {"id": 1, "title": "The Alchemist", "author": "Paulo Coelho", "genre": "Fiction", "price": 9.99, "rating": 4.5, "color": "#e07a5f",
+   "description": "A shepherd boy named Santiago travels from Spain to Egypt in search of treasure and learns to follow his dreams."},
+  {"id": 2, "title": "Atomic Habits", "author": "James Clear", "genre": "Self-Help", "price": 14.99, "rating": 4.8, "color": "#3d85c6",
+   "description": "Small daily changes add up to remarkable results. A simple guide to building good habits and breaking bad ones."},
+  {"id": 3, "title": "Wings of Fire", "author": "A. P. J. Abdul Kalam", "genre": "Biography", "price": 7.49, "rating": 4.7, "color": "#f4a261",
+   "description": "The inspiring life story of India's Missile Man and former President."},
+  {"id": 4, "title": "Clean Code", "author": "Robert C. Martin", "genre": "Technology", "price": 29.99, "rating": 4.6, "color": "#2a9d8f",
+   "description": "Learn how to write code that other people can read, understand and maintain."},
+  {"id": 5, "title": "Sapiens", "author": "Yuval Noah Harari", "genre": "History", "price": 12.99, "rating": 4.6, "color": "#8e6bbf",
+   "description": "A brief history of humankind, from the Stone Age to the modern world."},
+  {"id": 6, "title": "Harry Potter and the Philosopher's Stone", "author": "J. K. Rowling", "genre": "Fantasy", "price": 10.99, "rating": 4.9, "color": "#b5651d",
+   "description": "A boy discovers he is a wizard and begins his first year at Hogwarts School."}
+]

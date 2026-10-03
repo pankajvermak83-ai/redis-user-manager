@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BookNest</title>
+<link rel="stylesheet" href="style.css">
+</head><body>
+<header><a href="index.html">📚 BookNest</a></header>
+<main><h1>Find your next book</h1>
+<div class="controls">
+<input id="q" placeholder="Search by title or author...">
+<select id="g"><option value="">All genres</option><option value="Biography">Biography</option><option value="Fantasy">Fantasy</option><option value="Fiction">Fiction</option><option value="History">History</option><option value="Self-Help">Self-Help</option><option value="Technology">Technology</option></select></div>
+<div class="grid"><a class="card" href="book-1.html" data-title="the alchemist" data-author="paulo coelho" data-genre="Fiction">
+<div class="cover" style="background:#e07a5f">The Alchemist</div>
+<div class="info"><h3>The Alchemist</h3>
+<div class="muted">Paulo Coelho</div>
+<div class="muted">★★★★☆ 4.5</div>
+<div class="price">$9.99</div></div></a><a class="card" href="book-2.html" data-title="atomic habits" data-author="james clear" data-genre="Self-Help">
+<div class="cover" style="background:#3d85c6">Atomic Habits</div>
+<div class="info"><h3>Atomic Habits</h3>
+<div class="muted">James Clear</div>
+<div class="muted">★★★★★ 4.8</div>
+<div class="price">$14.99</div></div></a><a class="card" href="book-3.html" data-title="wings of fire" data-author="a. p. j. abdul kalam" data-genre="Biography">
+<div class="cover" style="background:#f4a261">Wings of Fire</div>
+<div class="info"><h3>Wings of Fire</h3>
+<div class="muted">A. P. J. Abdul Kalam</div>
+<div class="muted">★★★★★ 4.7</div>
+<div class="price">$7.49</div></div></a><a class="card" href="book-4.html" data-title="clean code" data-author="robert c. martin" data-genre="Technology">
+<div class="cover" style="background:#2a9d8f">Clean Code</div>
+<div class="info"><h3>Clean Code</h3>
+<div class="muted">Robert C. Martin</div>
+<div class="muted">★★★★★ 4.6</div>
+<div class="price">$29.99</div></div></a><a class="card" href="book-5.html" data-title="sapiens" data-author="yuval noah harari" data-genre="History">
+<div class="cover" style="background:#8e6bbf">Sapiens</div>
+<div class="info"><h3>Sapiens</h3>
+<div class="muted">Yuval Noah Harari</div>
+<div class="muted">★★★★★ 4.6</div>
+<div class="price">$12.99</div></div></a><a class="card" href="book-6.html" data-title="harry potter and the philosopher&#x27;s stone" data-author="j. k. rowling" data-genre="Fantasy">
+<div class="cover" style="background:#b5651d">Harry Potter and the Philosopher&#x27;s Stone</div>
+<div class="info"><h3>Harry Potter and the Philosopher&#x27;s Stone</h3>
+<div class="muted">J. K. Rowling</div>
+<div class="muted">★★★★★ 4.9</div>
+<div class="price">$10.99</div></div></a></div></main>
+<footer>© BookNest - made with Python</footer>
+<script>
+const q=document.getElementById('q'),g=document.getElementById('g');
+function filter(){
+  const t=q.value.toLowerCase(), genre=g.value;
+  document.querySelectorAll('.card').forEach(c=>{
+    const ok=(c.dataset.title.includes(t)||c.dataset.author.includes(t))&&(!genre||c.dataset.genre===genre);
+    c.classList.toggle('hidden',!ok);
+  });
+}
+q.addEventListener('input',filter); g.addEventListener('change',filter);
+</script>
+</body></html>
