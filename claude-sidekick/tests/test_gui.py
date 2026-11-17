@@ -262,7 +262,9 @@ def test_ask_about_copied_text(h):
     h.api.script.append(sse_events(["Add the missing", " bracket:\n=SUM(A1:A3)"]))
     h.ask("Why is this formula wrong?")
 
-    assert h.popup.answer_text() == "Add the missing bracket:\n=SUM(A1:A3)"
+    assert h.popup.answer_text() == (
+        "You asked: Why is this formula wrong?\n\nAdd the missing bracket:\n=SUM(A1:A3)"
+    )
     text = h.sent_text()
     assert "<active_window>\napp: Excel\ntitle: Budget.xlsx - Excel\n</active_window>" in text
     assert "<copied_text>\n=SUM(A1:A3\n</copied_text>" in text
@@ -297,7 +299,8 @@ def test_follow_up_question(h):
     assert [m["role"] for m in messages] == ["user", "assistant", "user"]
     assert messages[2]["content"] == "How do I answer?"
     shown = h.popup.answer_text()
-    assert "--- You asked: How do I answer? ---" in shown
+    assert shown.startswith("You asked: Translate this\n\nIt means: Hello, how are you?")
+    assert "\n\nYou asked: How do I answer?\n\n" in shown
     assert shown.endswith("Reply: Estoy bien, gracias.")
 
 
@@ -456,6 +459,7 @@ def test_big_pdf_asks_before_sending(h, tmp_path):
     assert h.dialogs.titles("confirm") == ["This is a big request"]
     assert "about 80¢" in h.dialogs.calls[-1][2]
     assert h.label(h.popup.status_label) == "Not sent."
+    assert h.popup.answer_text().endswith("[Not sent]")
     assert h.api.requests == []
 
     h.dialogs.answer = True

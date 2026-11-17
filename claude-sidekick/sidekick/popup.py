@@ -378,7 +378,10 @@ class Popup:
         else:
             content = build_followup_message(question)
             needs_count = False
-            self._append_answer(f"\n\n--- You asked: {question} ---\n\n")
+
+        # Show the question above its answer (the question box is cleared later).
+        lead = "\n\n" if self.answer_text().strip() else ""
+        self._append_answer(f"{lead}You asked: {question}\n\n")
 
         self._busy = True
         self._got_text = False
@@ -451,6 +454,7 @@ class Popup:
         if go:
             self._start_streaming(content)
         else:
+            self._append_answer("[Not sent]")
             self._finish("Not sent.")
 
     def _finish(self, status: str) -> None:
