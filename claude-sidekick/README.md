@@ -55,6 +55,10 @@ normal Windows ones.*
 
 ## Install (about 10 minutes, only once)
 
+Have Claude Code in VS Code? Paste the prompt from
+[INSTALL-WITH-CLAUDE-CODE.md](INSTALL-WITH-CLAUDE-CODE.md) into its chat,
+and it will do these steps for you, asking before each one.
+
 **1. Install Python**
 
 1. Open https://www.python.org/downloads/windows/ and download the
