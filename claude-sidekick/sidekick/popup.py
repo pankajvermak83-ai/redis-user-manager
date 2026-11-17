@@ -1,0 +1,502 @@
+"""The Ask window that appears when you press the hotkey."""
+
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
+
+from .attachments import Attachment, AttachmentError, attachment_from_path
+from .capture import Capture, read_clipboard
+from .claude_client import AskError, AskResult, Conversation
+from .config import MODELS
+from .costs import format_money, input_cost
+from .privacy import find_secrets
+from .prompts import build_first_message, build_followup_message
+
+log = logging.getLogger(__name__)
+
+
+class Dialogs:
+    """Pop-up questions and messages. Kept in one place so the tests can
+    answer them automatically."""
+
+    def info(self, parent, title: str, message: str) -> None:
+        messagebox.showinfo(title, message, parent=parent)
+
+    def error(self, parent, title: str, message: str) -> None:
+        messagebox.showerror(title, message, parent=parent)
+
+    def confirm(self, parent, title: str, message: str) -> bool:
+        return bool(messagebox.askyesno(title, message, parent=parent))
+
+    def open_file(self, parent) -> str:
+        return filedialog.askopenfilename(parent=parent, title="Attach a file") or ""
+
+
+class Popup:
+    """One window with three parts, top to bottom:
+    what will be sent, your question, and Claude's answer."""
+
+    def __init__(self, app):
+        self.app = app
+        self.conversation = Conversation()
+        self.capture = Capture()
+        self.attachment: Attachment | None = None
+        self.last_answer = ""
+
+        self._busy = False
+        self._request_id = 0  # replies from older requests are ignored
+        self._stop = threading.Event()
+        self._events: queue.Queue = queue.Queue()
+        self._got_text = False
+        self._pending: tuple = ("", None)  # (question, content) waiting on a size check
+        self._client = None  # the Claude client used by the current request
+        self._pump_job = None
+
+        self.win = tk.Toplevel(app.root)
+        self.win.withdraw()
+        self.win.title("Sidekick")
+        self.win.protocol("WM_DELETE_WINDOW", self.hide)
+        self.win.bind("<Escape>", lambda _e: self.hide())
+        self._build()
+
+    # ------------------------------------------------------------- layout
+
+    def _build(self) -> None:
+        text_font = tkfont.nametofont("TkTextFont").copy()
+        text_font.configure(size=max(10, int(text_font.cget("size"))))
+        bold = tkfont.nametofont("TkDefaultFont").copy()
+        bold.configure(weight="bold")
+        self._fonts = (text_font, bold)  # keep them alive
+
+        outer = ttk.Frame(self.win, padding=10)
+        outer.grid(sticky="nsew")
+        self.win.columnconfigure(0, weight=1)
+        self.win.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(5, weight=1)
+
+        self.where_label = ttk.Label(outer, text="", font=bold)
+        self.where_label.grid(row=0, column=0, sticky="w")
+        self.note_label = ttk.Label(outer, text="", wraplength=540, justify="left")
+        self.note_label.grid(row=1, column=0, sticky="we", pady=(2, 6))
+
+        # --- what will be sent
+        self.send_frame = ttk.LabelFrame(outer, text="What will be sent to Claude (you can edit or delete it)", padding=6)
+        self.send_frame.grid(row=2, column=0, sticky="we")
+        self.send_frame.columnconfigure(0, weight=1)
+        self.ctx_text = tk.Text(self.send_frame, height=6, width=66, wrap="word", undo=True, font=text_font)
+        self.ctx_text.grid(row=0, column=0, sticky="we")
+        ctx_scroll = ttk.Scrollbar(self.send_frame, orient="vertical", command=self.ctx_text.yview)
+        ctx_scroll.grid(row=0, column=1, sticky="ns")
+        self.ctx_text.configure(yscrollcommand=ctx_scroll.set)
+
+        attach_row = ttk.Frame(self.send_frame)
+        attach_row.grid(row=1, column=0, columnspan=2, sticky="we", pady=(6, 0))
+        attach_row.columnconfigure(0, weight=1)
+        self.attach_label = ttk.Label(attach_row, text="No picture or file attached.")
+        self.attach_label.grid(row=0, column=0, sticky="w")
+        self.remove_button = ttk.Button(attach_row, text="Remove", command=self.on_remove_attachment)
+        self.remove_button.grid(row=0, column=1, padx=(6, 0))
+        self.paste_button = ttk.Button(attach_row, text="Paste clipboard", command=self.on_paste_clipboard)
+        self.paste_button.grid(row=0, column=2, padx=(6, 0))
+        self.attach_button = ttk.Button(attach_row, text="Attach file...", command=self.on_attach_file)
+        self.attach_button.grid(row=0, column=3, padx=(6, 0))
+
+        # --- the question
+        ask_row = ttk.Frame(outer)
+        ask_row.grid(row=3, column=0, sticky="we", pady=(8, 0))
+        ask_row.columnconfigure(1, weight=1)
+        ttk.Label(ask_row, text="Your question:").grid(row=0, column=0, sticky="w")
+        self.question_var = tk.StringVar()
+        self.question_entry = ttk.Entry(ask_row, textvariable=self.question_var)
+        self.question_entry.grid(row=0, column=1, sticky="we", padx=6)
+        self.question_entry.bind("<Return>", lambda _e: self.on_ask())
+        self.ask_button = ttk.Button(ask_row, text="Ask", command=self.on_ask)
+        self.ask_button.grid(row=0, column=2)
+
+        self.quick_row = ttk.Frame(outer)
+        self.quick_row.grid(row=4, column=0, sticky="w", pady=(6, 6))
+        self.quick_buttons: list[ttk.Button] = []
+        self.rebuild_quick_actions()
+
+        # --- the answer
+        answer_frame = ttk.Frame(outer)
+        answer_frame.grid(row=5, column=0, sticky="nsew")
+        answer_frame.columnconfigure(0, weight=1)
+        answer_frame.rowconfigure(0, weight=1)
+        self.answer = tk.Text(answer_frame, height=12, width=66, wrap="word", state="disabled", font=text_font)
+        self.answer.grid(row=0, column=0, sticky="nsew")
+        answer_scroll = ttk.Scrollbar(answer_frame, orient="vertical", command=self.answer.yview)
+        answer_scroll.grid(row=0, column=1, sticky="ns")
+        self.answer.configure(yscrollcommand=answer_scroll.set)
+        # Clicking in the answer lets you select part of it and press Ctrl+C.
+        self.answer.bind("<Button-1>", lambda _e: self.answer.focus_set())
+
+        bottom = ttk.Frame(outer)
+        bottom.grid(row=6, column=0, sticky="we", pady=(8, 0))
+        bottom.columnconfigure(3, weight=1)
+        self.copy_button = ttk.Button(bottom, text="Copy answer", command=self.on_copy_answer)
+        self.copy_button.grid(row=0, column=0)
+        self.stop_button = ttk.Button(bottom, text="Stop", command=self.on_stop)
+        self.stop_button.grid(row=0, column=1, padx=6)
+        self.new_button = ttk.Button(bottom, text="New question", command=self.on_new_question)
+        self.new_button.grid(row=0, column=2)
+        self.status_label = ttk.Label(bottom, text="", anchor="e", justify="right", wraplength=300)
+        self.status_label.grid(row=0, column=3, sticky="e")
+
+        self._update_controls()
+
+    def rebuild_quick_actions(self) -> None:
+        for button in self.quick_buttons:
+            button.destroy()
+        self.quick_buttons = []
+        for i, action in enumerate(self.app.settings.quick_actions):
+            button = ttk.Button(
+                self.quick_row, text=action["label"],
+                command=lambda prompt=action["prompt"]: self.on_ask(prompt, quick=True),
+            )
+            button.grid(row=0, column=i, padx=(0, 6))
+            self.quick_buttons.append(button)
+
+    # --------------------------------------------------------- show / hide
+
+    @property
+    def visible(self) -> bool:
+        return self.win.state() != "withdrawn"
+
+    def open(self, capture: Capture) -> None:
+        """Start fresh with whatever was just captured, and show the window."""
+        self._abandon_request()
+        self.conversation = Conversation()
+        self.capture = capture
+        self.attachment = capture.attachment
+        self.last_answer = ""
+
+        if capture.private:
+            where = "Private window (nothing was read)"
+        elif capture.window is not None:
+            where = "From: " + capture.window.describe()
+        else:
+            where = "Ask Claude"
+        self.where_label.configure(text=where)
+        self.note_label.configure(text=capture.note)
+
+        self.ctx_text.configure(state="normal")
+        self.ctx_text.delete("1.0", "end")
+        if capture.text:
+            self.ctx_text.insert("1.0", capture.text)
+        self._set_answer("")
+        self.question_var.set("")
+        self.send_frame.configure(text="What will be sent to Claude (you can edit or delete it)")
+        self._set_status("")
+        self._update_controls()
+
+        first_time = not self.visible
+        self.win.deiconify()
+        if first_time:
+            self._place_near_pointer()
+        self.focus()
+
+    def focus(self) -> None:
+        self.win.lift()
+        self.win.attributes("-topmost", True)
+        self.win.focus_force()
+        self.question_entry.focus_set()
+
+    def hide(self) -> None:
+        self._abandon_request()
+        self.win.withdraw()
+
+    def _place_near_pointer(self) -> None:
+        self.win.update_idletasks()
+        w, h = self.win.winfo_reqwidth(), self.win.winfo_reqheight()
+        px, py = self.win.winfo_pointerxy()
+        vx, vy = self.win.winfo_vrootx(), self.win.winfo_vrooty()
+        vw, vh = self.win.winfo_vrootwidth(), self.win.winfo_vrootheight()
+        if vw <= 1 or vh <= 1:
+            vx, vy, vw, vh = 0, 0, self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+        x = max(vx + 8, min(px - w // 2, vx + vw - w - 8))
+        y = max(vy + 8, min(py - h // 3, vy + vh - h - 60))
+        self.win.geometry(f"+{x}+{y}")
+
+    # ------------------------------------------------------ small helpers
+
+    def _set_status(self, text: str) -> None:
+        self.status_label.configure(text=text)
+
+    def _set_answer(self, text: str) -> None:
+        self.answer.configure(state="normal")
+        self.answer.delete("1.0", "end")
+        if text:
+            self.answer.insert("1.0", text)
+        self.answer.configure(state="disabled")
+
+    def _append_answer(self, text: str) -> None:
+        self.answer.configure(state="normal")
+        self.answer.insert("end", text)
+        self.answer.configure(state="disabled")
+        self.answer.see("end")
+
+    def answer_text(self) -> str:
+        return self.answer.get("1.0", "end-1c")
+
+    def context_text(self) -> str:
+        return self.ctx_text.get("1.0", "end-1c")
+
+    def _update_controls(self) -> None:
+        """Switch buttons on and off to match what can be done right now."""
+        def state(on: bool) -> str:
+            return "normal" if on else "disabled"
+
+        editable = not self.conversation.started and not self._busy
+        self.ctx_text.configure(state=state(editable))
+        self.paste_button.configure(state=state(editable))
+        self.attach_button.configure(state=state(editable))
+        self.remove_button.configure(state=state(editable and self.attachment is not None))
+        self.attach_label.configure(
+            text=("Attached: " + self.attachment.describe()) if self.attachment else "No picture or file attached."
+        )
+        for widget in [self.ask_button, self.question_entry, *self.quick_buttons]:
+            widget.configure(state=state(not self._busy))
+        self.stop_button.configure(state=state(self._busy))
+        self.copy_button.configure(state=state(bool(self.last_answer)))
+
+    # ------------------------------------------------- attachment buttons
+
+    def on_remove_attachment(self) -> None:
+        self.attachment = None
+        self._update_controls()
+
+    def on_attach_file(self) -> None:
+        path = self.app.dialogs.open_file(self.win)
+        if not path:
+            return
+        try:
+            self.attachment = attachment_from_path(path, self.app.settings.max_image_edge)
+        except AttachmentError as e:
+            self.app.dialogs.error(self.win, "Cannot attach this file", str(e))
+            return
+        self._update_controls()
+
+    def on_paste_clipboard(self) -> None:
+        if self.app.platform.clipboard_marked_private() and not self.app.dialogs.confirm(
+            self.win, "Private clipboard",
+            "The clipboard holds something marked private (it may be a password).\n\nUse it anyway?",
+        ):
+            return
+        text, attachment, note = read_clipboard(
+            self.app.read_clipboard_text, self.app.platform.grab_clipboard_media, self.app.settings
+        )
+        if text:
+            self.ctx_text.delete("1.0", "end")
+            self.ctx_text.insert("1.0", text)
+        if attachment is not None:
+            self.attachment = attachment
+        self.note_label.configure(text=note)
+        self._update_controls()
+
+    # ---------------------------------------------------------------- ask
+
+    def on_ask(self, question: str | None = None, quick: bool = False) -> None:
+        if self._busy:
+            return
+        app = self.app
+        question = (question if question is not None else self.question_var.get()).strip()
+        first = not self.conversation.started
+        text = self.context_text().strip() if first else ""
+
+        if not question:
+            self._set_status("Type a question, or click one of the buttons.")
+            return
+        if quick and first and not text and self.attachment is None:
+            self._set_status("Copy something first (Ctrl+C) and click Paste clipboard, or type your own question.")
+            return
+        if not app.has_key():
+            app.open_settings("To ask Claude, Sidekick needs your Anthropic API key. Paste it below.")
+            return
+        limit = app.settings.daily_limit_usd
+        spent = app.spend.today_total()
+        if limit > 0 and spent >= limit:
+            app.dialogs.info(
+                self.win, "Daily limit reached",
+                f"Today's estimated spending ({format_money(spent)}) has reached your daily limit "
+                f"of ${limit:.2f}.\n\nYou can raise the limit in Settings.",
+            )
+            return
+
+        if first:
+            if len(text) > app.settings.max_text_chars:
+                app.dialogs.info(
+                    self.win, "Too much text",
+                    f"The box holds {len(text):,} characters; the most Sidekick sends is "
+                    f"{app.settings.max_text_chars:,}.\n\nDelete the parts you do not need.",
+                )
+                return
+            secrets = find_secrets(text + "\n" + question)
+            if secrets and not app.dialogs.confirm(
+                self.win, "This may contain a secret",
+                "The text you are about to send looks like it contains "
+                + " and ".join(secrets)
+                + ".\n\nSend it to Claude anyway?",
+            ):
+                return
+            window = self.capture.window if (app.settings.send_window_title and not self.capture.private) else None
+            content: object = build_first_message(question, text, window, self.attachment)
+            needs_count = self.attachment is not None and self.attachment.kind in ("pdf", "text")
+        else:
+            content = build_followup_message(question)
+            needs_count = False
+            self._append_answer(f"\n\n--- You asked: {question} ---\n\n")
+
+        self._busy = True
+        self._got_text = False
+        self._request_id += 1
+        self._stop = threading.Event()
+        self._pending = (question, content)
+        self._client = app.client()  # made here, on the window's own thread
+        self._update_controls()
+        if needs_count:
+            self._set_status("Checking the size...")
+            self._run_in_background(self._count_worker, self._client, content)
+        else:
+            self._start_streaming(content)
+        if self._pump_job is None:
+            self._pump()
+
+    def _run_in_background(self, target, *args) -> None:
+        threading.Thread(target=target, args=(self._request_id, *args), daemon=True).start()
+
+    def _count_worker(self, rid: int, client, content: object) -> None:
+        try:
+            tokens = client.count_input_tokens(self.conversation, content)
+        except Exception:
+            log.exception("Size check failed")
+            tokens = None
+        self._events.put((rid, "count", tokens))
+
+    def _start_streaming(self, content: object) -> None:
+        self._set_status("Thinking...")
+        self._run_in_background(self._ask_worker, self._client, content, self.conversation, self._stop)
+
+    def _ask_worker(self, rid: int, client, content: object, conversation: Conversation, stop: threading.Event) -> None:
+        try:
+            result = client.ask(
+                conversation, content, lambda piece: self._events.put((rid, "text", piece)), stop.is_set
+            )
+            self._events.put((rid, "done", result))
+        except AskError as e:
+            self._events.put((rid, "error", e))
+        except Exception:
+            log.exception("Unexpected error while asking Claude")
+            self._events.put((rid, "error", AskError(
+                "Something unexpected went wrong. The details are in Sidekick's log file."
+            )))
+
+    def _pump(self) -> None:
+        """Move replies from the background thread onto the screen."""
+        self._pump_job = None
+        try:
+            while True:
+                rid, kind, payload = self._events.get_nowait()
+                if rid != self._request_id:
+                    continue  # from a request that was stopped or replaced
+                if kind == "text":
+                    if not self._got_text:
+                        self._got_text = True
+                        self._set_status("Writing...")
+                    self._append_answer(payload)
+                elif kind == "count":
+                    self._on_counted(payload)
+                elif kind == "done":
+                    self._on_done(payload)
+                elif kind == "error":
+                    self._on_error(payload)
+        except queue.Empty:
+            pass
+        if self._busy and self._pump_job is None:
+            self._pump_job = self.win.after(30, self._pump)
+
+    def _on_counted(self, tokens: int | None) -> None:
+        app = self.app
+        _question, content = self._pending
+        go = True
+        if tokens is None:
+            if self.attachment is not None and self.attachment.kind == "pdf":
+                go = app.dialogs.confirm(
+                    self.win, "Size unknown",
+                    "Sidekick could not check how big this PDF is. Long PDFs can cost a lot to send.\n\nSend it anyway?",
+                )
+        else:
+            cost = input_cost(app.settings.model, tokens)
+            threshold = app.settings.confirm_cost_usd
+            if cost is not None and threshold > 0 and cost > threshold:
+                go = app.dialogs.confirm(
+                    self.win, "This is a big request",
+                    f"This will send about {tokens:,} tokens to Claude. That costs about "
+                    f"{format_money(cost)} before the answer.\n\nSend it?",
+                )
+        if go:
+            self._start_streaming(content)
+        else:
+            self._finish("Not sent.")
+
+    def _finish(self, status: str) -> None:
+        self._busy = False
+        self._set_status(status)
+        self._update_controls()
+
+    def _on_done(self, result: AskResult) -> None:
+        app = self.app
+        if result.cancelled:
+            self._finish("Stopped.")
+            return
+        total = app.spend.add(result.cost_usd)
+        app.refresh_main()
+        if result.notice:
+            self._append_answer(("\n\n" if self.answer_text().strip() else "") + f"[{result.notice}]")
+        if not result.refused:
+            self.last_answer = result.text
+            self.question_var.set("")
+            self.send_frame.configure(text="Sent with your first question")
+        info = MODELS.get(result.model)
+        name = info.short if info else (result.model or "Claude")
+        self._finish(f"{name} · about {format_money(result.cost_usd)} · today {format_money(total)}")
+        self.question_entry.focus_set()
+
+    def _on_error(self, error: AskError) -> None:
+        self._append_answer(("\n\n" if self.answer_text().strip() else "") + f"[Problem] {error}")
+        self._finish("Not answered.")
+        if error.needs_key:
+            self.app.open_settings(str(error))
+
+    def _abandon_request(self) -> None:
+        """Stop listening to the current request (if any)."""
+        self._stop.set()
+        self._request_id += 1
+        self._busy = False
+
+    def on_stop(self) -> None:
+        if not self._busy:
+            return
+        self._abandon_request()
+        self._append_answer("\n[Stopped]")
+        self._finish("Stopped.")
+
+    def on_new_question(self) -> None:
+        self.open(Capture(window=self.capture.window, private=self.capture.private,
+                          note="Started a new question. Paste or attach what you want to ask about."))
+
+    def on_copy_answer(self) -> None:
+        if not self.last_answer:
+            return
+        root = self.app.root
+        root.clipboard_clear()
+        root.clipboard_append(self.last_answer)
+        root.update_idletasks()
+        self.app.watch.note_own_copy(self.last_answer)
+        self._set_status("Copied. Press Ctrl+V in your app to paste.")
