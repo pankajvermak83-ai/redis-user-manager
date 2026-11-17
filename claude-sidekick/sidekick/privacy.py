@@ -16,11 +16,17 @@ from .platform_base import WindowInfo
 
 
 def is_private_window(window: WindowInfo | None, private_words: list[str]) -> bool:
-    """True if the window's program name or title contains a private word."""
+    """True if a word in the window's program name or title starts with a
+    private word. "Bank statement" and "Passwords.txt" count; "Design input"
+    does not count as "sign in", because "sign" is inside another word."""
     if window is None:
         return False
     haystack = f"{window.exe} {window.title}".lower()
-    return any(word and word.lower() in haystack for word in private_words)
+    for word in private_words:
+        word = word.strip().lower()
+        if word and re.search(r"(?<![a-z0-9])" + re.escape(word), haystack):
+            return True
+    return False
 
 
 _SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [

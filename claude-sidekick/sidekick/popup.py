@@ -19,6 +19,33 @@ from .prompts import build_first_message, build_followup_message
 
 log = logging.getLogger(__name__)
 
+_UNEXPECTED = "Something unexpected went wrong. The details are in Sidekick's log file."
+
+
+def _ask_worker(events: queue.Queue, rid: int, client, content: object,
+                conversation: Conversation, stop: threading.Event) -> None:
+    """Runs on a background thread: ask Claude and post what happens to
+    `events`. Each message carries `rid` so the window can ignore replies to
+    a question that was stopped or replaced."""
+    try:
+        result = client.ask(conversation, content, lambda piece: events.put((rid, "text", piece)), stop.is_set)
+        events.put((rid, "done", result))
+    except AskError as e:
+        events.put((rid, "error", e))
+    except Exception:
+        log.exception("Unexpected error while asking Claude")
+        events.put((rid, "error", AskError(_UNEXPECTED)))
+
+
+def _count_worker(events: queue.Queue, rid: int, client, conversation: Conversation, content: object) -> None:
+    """Runs on a background thread: find out how big a request would be."""
+    try:
+        tokens = client.count_input_tokens(conversation, content)
+    except Exception:
+        log.exception("Size check failed")
+        tokens = None
+    events.put((rid, "count", tokens))
+
 
 class Dialogs:
     """Pop-up questions and messages. Kept in one place so the tests can
@@ -362,40 +389,21 @@ class Popup:
         self._update_controls()
         if needs_count:
             self._set_status("Checking the size...")
-            self._run_in_background(self._count_worker, self._client, content)
+            self._run_in_background(_count_worker, self._client, self.conversation, content)
         else:
             self._start_streaming(content)
         if self._pump_job is None:
             self._pump()
 
     def _run_in_background(self, target, *args) -> None:
-        threading.Thread(target=target, args=(self._request_id, *args), daemon=True).start()
-
-    def _count_worker(self, rid: int, client, content: object) -> None:
-        try:
-            tokens = client.count_input_tokens(self.conversation, content)
-        except Exception:
-            log.exception("Size check failed")
-            tokens = None
-        self._events.put((rid, "count", tokens))
+        # The thread gets only plain objects (the queue, the Claude client,
+        # the conversation): never a window. Tk windows must only ever be
+        # touched, or freed, by the thread that created them.
+        threading.Thread(target=target, args=(self._events, self._request_id, *args), daemon=True).start()
 
     def _start_streaming(self, content: object) -> None:
         self._set_status("Thinking...")
-        self._run_in_background(self._ask_worker, self._client, content, self.conversation, self._stop)
-
-    def _ask_worker(self, rid: int, client, content: object, conversation: Conversation, stop: threading.Event) -> None:
-        try:
-            result = client.ask(
-                conversation, content, lambda piece: self._events.put((rid, "text", piece)), stop.is_set
-            )
-            self._events.put((rid, "done", result))
-        except AskError as e:
-            self._events.put((rid, "error", e))
-        except Exception:
-            log.exception("Unexpected error while asking Claude")
-            self._events.put((rid, "error", AskError(
-                "Something unexpected went wrong. The details are in Sidekick's log file."
-            )))
+        self._run_in_background(_ask_worker, self._client, content, self.conversation, self._stop)
 
     def _pump(self) -> None:
         """Move replies from the background thread onto the screen."""
@@ -479,6 +487,12 @@ class Popup:
         self._stop.set()
         self._request_id += 1
         self._busy = False
+        if self._pump_job is not None:
+            try:
+                self.win.after_cancel(self._pump_job)
+            except tk.TclError:
+                pass  # the window is already gone
+            self._pump_job = None
 
     def on_stop(self) -> None:
         if not self._busy:

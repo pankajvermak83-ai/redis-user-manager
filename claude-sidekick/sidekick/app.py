@@ -51,6 +51,7 @@ class SidekickApp:
         self.active_hotkey: Hotkey | None = None
         self.hotkey_note = ""
         self.settings_dialog: SettingsDialog | None = None
+        self._closed = False
 
         root.report_callback_exception = self._on_window_error
         self._build_main_window()
@@ -90,10 +91,13 @@ class SidekickApp:
 
     def refresh_main(self) -> None:
         """Bring the main window's text up to date."""
-        hotkey = self.active_hotkey.pretty() if self.active_hotkey else "the Ask now button"
+        if self.active_hotkey:
+            step2 = f"2. Press {self.active_hotkey.pretty()}. This works in any app."
+        else:
+            step2 = "2. Click the Ask now button below."
         self.howto_label.configure(text=(
             "1. Copy text (Ctrl+C), or snip part of the screen (Win+Shift+S).\n"
-            f"2. Press {hotkey}. This works in any app.\n"
+            f"{step2}\n"
             "3. Type your question and click Ask.\n\n"
             "Nothing is sent to Claude until you click Ask.\n"
             "You can minimize this window. Sidekick keeps running."
@@ -115,8 +119,9 @@ class SidekickApp:
         self.key_label.configure(text=key_text)
 
         spent, limit = self.spend.today_total(), self.settings.daily_limit_usd
+        spent_text = f"about {format_money(spent)}" if spent > 0 else "$0.00"
         limit_text = f" of your ${limit:.2f} daily limit" if limit > 0 else ""
-        self.spend_label.configure(text=f"Spent today: about {format_money(spent)}{limit_text}")
+        self.spend_label.configure(text=f"Spent today: {spent_text}{limit_text}")
 
     # ------------------------------------------------------------ hotkey
 
@@ -236,12 +241,15 @@ class SidekickApp:
             self.root.iconify()
 
     def quit(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.platform.stop_hotkey()
         try:
             self.root.after_cancel(self._tick_job)
-        except Exception:
+            self.popup.hide()
+        except tk.TclError:
             pass
-        self.popup.hide()
-        self.platform.stop_hotkey()
         self.root.destroy()
 
     def _on_window_error(self, exc_type, exc, tb) -> None:
