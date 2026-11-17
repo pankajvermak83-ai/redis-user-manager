@@ -9,14 +9,18 @@ standard `ctypes` module), so there is nothing extra to install:
   * the title and program name of the window you were in;
   * a counter that tells whether the clipboard changed (not what is in it);
   * a check for "this is private" markers that password managers put on
-    the clipboard.
+    the clipboard;
+  * opening the Claude app (claude:// links), Chrome, or File Explorer.
 """
 
 from __future__ import annotations
 
 import ctypes
+import importlib
 import logging
 import ntpath
+import os
+import subprocess
 import threading
 from ctypes import wintypes
 from typing import Callable, Optional
@@ -48,6 +52,40 @@ _NAMED_KEYS = {
     "delete": 0x2E, "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
     "pause": 0x13,
 }
+
+
+CHROME_APP_PATH = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+
+
+def protocol_registered(winreg, scheme: str) -> bool:
+    """True if some app has told Windows it opens `scheme://` links."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, scheme) as key:
+            winreg.QueryValueEx(key, "URL Protocol")
+            return True
+    except OSError:
+        return False
+
+
+def find_chrome(winreg, environ, isfile) -> str | None:
+    """Where chrome.exe is, or None. Chrome's installer records its location
+    under "App Paths"; the usual folders are checked as well."""
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, CHROME_APP_PATH) as key:
+                value, _kind = winreg.QueryValueEx(key, "")
+        except OSError:
+            continue
+        path = str(value or "").strip().strip('"')
+        if path and isfile(path):
+            return path
+    for var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = environ.get(var)
+        if base:
+            path = ntpath.join(base, "Google", "Chrome", "Application", "chrome.exe")
+            if isfile(path):
+                return path
+    return None
 
 
 def modifier_flags(hotkey: Hotkey) -> int:
@@ -180,10 +218,22 @@ class _HotkeyThread(threading.Thread):
 class WindowsPlatform(Platform):
     name = "windows"
 
-    def __init__(self, api: Win32Api | None = None):
+    def __init__(self, api: Win32Api | None = None, *, winreg=None, startfile=None,
+                 popen=None, isfile=None, environ=None):
         self._api = api or load_win32()
         self._hotkey_thread: _HotkeyThread | None = None
         self._mutex = None
+        # Swappable so the tests can run without Windows.
+        self._winreg = winreg
+        self._startfile = startfile or getattr(os, "startfile", None)
+        self._popen = popen or subprocess.Popen
+        self._isfile = isfile or os.path.isfile
+        self._environ = environ if environ is not None else os.environ
+
+    def _reg(self):
+        if self._winreg is None:
+            self._winreg = importlib.import_module("winreg")
+        return self._winreg
 
     def prepare_process(self) -> None:
         # Makes text sharp on high-resolution screens. Harmless if it fails.
@@ -263,3 +313,42 @@ class WindowsPlatform(Platform):
         except Exception as e:
             log.warning("Could not read a picture from the clipboard: %s", type(e).__name__)
             return None
+
+    # ------------------------------------------------- Claude app / website
+
+    def claude_app_installed(self) -> bool:
+        return protocol_registered(self._reg(), "claude")
+
+    def open_link(self, url: str) -> bool:
+        """Open a link the way double-clicking it would: claude:// links go to
+        the Claude app, https:// links to your usual browser."""
+        if self._startfile is None:
+            return False
+        try:
+            self._startfile(url)
+            return True
+        except OSError as e:
+            log.warning("Could not open a %s link: %s", url.split(":", 1)[0], e)
+            return False
+
+    def open_in_chrome(self, url: str) -> bool:
+        chrome = find_chrome(self._reg(), self._environ, self._isfile)
+        if chrome is None:
+            return False
+        try:
+            self._popen([chrome, url])
+            return True
+        except OSError as e:
+            log.warning("Could not start Chrome: %s", e)
+            return False
+
+    def reveal_file(self, path: str) -> bool:
+        if '"' in path:  # never happens on Windows; keeps the command line safe
+            return False
+        try:
+            # Explorer wants exactly this form: /select,"C:\folder\file.pdf"
+            self._popen(f'explorer /select,"{path}"')
+            return True
+        except OSError as e:
+            log.warning("Could not open File Explorer: %s", e)
+            return False

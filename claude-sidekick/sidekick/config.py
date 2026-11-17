@@ -42,6 +42,14 @@ DEFAULT_MODEL = "claude-opus-5-5"
 EFFORTS = ("low", "medium", "high")
 DEFAULT_EFFORT = "medium"
 
+# Where a question goes when you click the button in the Ask window.
+#   claude_app: the Claude desktop app opens with the question filled in.
+#   chrome:     the Claude website (claude.ai) opens in Chrome.
+#   api:        Sidekick asks Claude itself and shows the answer (API key).
+# The first two use your normal Claude plan, so there is no extra bill.
+SEND_TO_CHOICES = ("claude_app", "chrome", "api")
+DEFAULT_SEND_TO = "claude_app"
+
 # --------------------------------------------------------------------------
 # Defaults
 # --------------------------------------------------------------------------
@@ -75,6 +83,7 @@ DEFAULT_QUICK_ACTIONS = [
 
 @dataclass
 class Settings:
+    send_to: str = DEFAULT_SEND_TO
     model: str = DEFAULT_MODEL
     effort: str = DEFAULT_EFFORT
     hotkey: str = DEFAULT_HOTKEY
@@ -106,6 +115,10 @@ class Settings:
         s = cls()
         if not isinstance(data, dict):
             return s
+
+        send_to = data.get("send_to")
+        if isinstance(send_to, str) and send_to in SEND_TO_CHOICES:
+            s.send_to = send_to
 
         model = data.get("model")
         if isinstance(model, str) and model in MODELS:

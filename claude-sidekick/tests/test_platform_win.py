@@ -203,3 +203,93 @@ def test_prepare_process_sets_sharp_text_mode():
     fake = FakeWindows()
     WindowsPlatform(fake.api).prepare_process()
     assert fake.dpi_calls == [1]
+
+
+# ------------------------------------------------ Claude app, Chrome, Explorer
+
+from sidekick.platform_win import CHROME_APP_PATH, find_chrome  # noqa: E402
+
+
+class FakeKey:
+    def __init__(self, values):
+        self.values = values
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeWinreg:
+    """A stand-in for Python's winreg module (the Windows registry)."""
+
+    HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE = "HKCR", "HKCU", "HKLM"
+
+    def __init__(self, keys):
+        self.keys = keys  # {(hive, path): {value name: value}}
+
+    def OpenKey(self, hive, path):
+        if (hive, path) not in self.keys:
+            raise FileNotFoundError(path)
+        return FakeKey(self.keys[(hive, path)])
+
+    def QueryValueEx(self, key, name):
+        if name not in key.values:
+            raise FileNotFoundError(name)
+        return key.values[name], 1
+
+
+def test_claude_app_is_detected_by_its_link_type():
+    api = FakeWindows().api
+    installed = FakeWinreg({("HKCR", "claude"): {"": "URL:claude", "URL Protocol": ""}})
+    assert WindowsPlatform(api, winreg=installed).claude_app_installed()
+    not_a_link_type = FakeWinreg({("HKCR", "claude"): {"": "something else"}})
+    assert not WindowsPlatform(api, winreg=not_a_link_type).claude_app_installed()
+    assert not WindowsPlatform(api, winreg=FakeWinreg({})).claude_app_installed()
+
+
+def test_finding_chrome():
+    chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    registered = FakeWinreg({("HKLM", CHROME_APP_PATH): {"": f'"{chrome}"'}})
+    assert find_chrome(registered, {}, lambda p: p == chrome) == chrome
+    # a registry entry for a Chrome that was deleted is ignored
+    assert find_chrome(registered, {}, lambda p: False) is None
+
+    local = r"C:\Users\Pat\AppData\Local\Google\Chrome\Application\chrome.exe"
+    environ = {"LOCALAPPDATA": r"C:\Users\Pat\AppData\Local"}
+    assert find_chrome(FakeWinreg({}), environ, lambda p: p == local) == local
+    assert find_chrome(FakeWinreg({}), {}, lambda p: True) is None
+
+
+def test_opening_links_chrome_and_file_explorer():
+    started, launched = [], []
+
+    def startfile(url):
+        if url.startswith("broken:"):
+            raise OSError("No application is associated with this link")
+        started.append(url)
+
+    chrome = r"C:\Chrome\chrome.exe"
+    platform = WindowsPlatform(
+        FakeWindows().api,
+        winreg=FakeWinreg({("HKCU", CHROME_APP_PATH): {"": chrome}}),
+        startfile=startfile, popen=launched.append, isfile=lambda p: p == chrome, environ={},
+    )
+    assert platform.open_link("claude://claude.ai/new?q=Hi")
+    assert started == ["claude://claude.ai/new?q=Hi"]
+    assert not platform.open_link("broken://x")
+
+    assert platform.open_in_chrome("https://claude.ai/new")
+    assert launched[-1] == [chrome, "https://claude.ai/new"]
+
+    assert platform.reveal_file(r"C:\My Docs\report.pdf")
+    assert launched[-1] == 'explorer /select,"C:\\My Docs\\report.pdf"'
+
+
+def test_no_chrome_installed():
+    launched = []
+    platform = WindowsPlatform(FakeWindows().api, winreg=FakeWinreg({}), popen=launched.append,
+                               isfile=lambda p: False, environ={})
+    assert not platform.open_in_chrome("https://claude.ai/new")
+    assert launched == []

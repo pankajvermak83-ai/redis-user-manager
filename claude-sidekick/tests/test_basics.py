@@ -32,6 +32,13 @@ def test_settings_survive_a_save_and_load(tmp_path):
     assert not (tmp_path / "config.json.tmp").exists()  # the temporary file was renamed
 
 
+def test_questions_go_to_the_claude_app_by_default():
+    assert Settings().send_to == "claude_app"
+    assert Settings.from_dict({"send_to": "api"}).send_to == "api"
+    assert Settings.from_dict({"send_to": "chrome"}).send_to == "chrome"
+    assert Settings.from_dict({"send_to": "fax"}).send_to == "claude_app"
+
+
 def test_damaged_or_missing_settings_fall_back_to_defaults(tmp_path):
     assert load_settings(tmp_path / "nope.json") == Settings()
     bad = tmp_path / "bad.json"
@@ -194,9 +201,10 @@ def test_small_picture_is_not_enlarged():
 
 def test_files_on_disk(tmp_path):
     notes = tmp_path / "notes.txt"
-    notes.write_bytes("﻿Meeting at 10".encode("utf-8"))
+    notes.write_bytes("\ufeffMeeting at 10".encode("utf-8"))
     att = attachment_from_path(str(notes), 1920)
     assert att.kind == "text" and att.text() == "Meeting at 10"
+    assert att.path == str(notes)
     assert att.content_block() is None
 
     old = tmp_path / "old.txt"
@@ -364,3 +372,15 @@ def test_copied_picture_and_copied_files(tmp_path):
 
     text, att, note = read_clipboard(lambda: "", lambda: None, settings)
     assert att is None and "nothing Sidekick can use" in note
+
+
+def test_snipped_picture_can_be_saved_for_dragging(tmp_path, monkeypatch):
+    from sidekick.attachments import save_to_temp_file
+
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    snip = image_attachment(Image.new("RGB", (20, 10)), "", 1920)
+    path = save_to_temp_file(snip)
+    assert path == str(tmp_path / "Sidekick" / "Sidekick picture.png")
+    assert snip.path == path and snip.name == "Sidekick picture.png"
+    with Image.open(path) as img:
+        assert img.size == (20, 10)

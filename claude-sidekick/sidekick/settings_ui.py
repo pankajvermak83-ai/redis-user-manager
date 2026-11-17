@@ -6,16 +6,21 @@ import tkinter as tk
 from tkinter import ttk
 
 from . import keystore
-from .config import EFFORTS, MODELS, save_settings
+from .config import EFFORTS, MODELS, SEND_TO_CHOICES, save_settings
 from .hotkeys import parse_hotkey
 
+# Ctrl+Alt+Space is left out on purpose: the Claude app may use it.
 HOTKEY_CHOICES = [
     "ctrl+shift+space",
     "ctrl+alt+shift+space",
-    "ctrl+alt+space",
     "ctrl+shift+f9",
     "win+shift+a",
 ]
+SEND_TO_LABELS = {
+    "claude_app": "The Claude app on this PC (your Claude plan, no extra cost)",
+    "chrome": "The Claude website in Chrome (your Claude plan, no extra cost)",
+    "api": "Answer inside Sidekick (API key, pay per use)",
+}
 EFFORT_LABELS = {
     "low": "Low - quickest and cheapest",
     "medium": "Medium - balanced (recommended)",
@@ -36,52 +41,39 @@ class SettingsDialog:
 
         frame = ttk.Frame(self.win, padding=14)
         frame.grid()
+        frame.columnconfigure(1, weight=1)
         row = 0
         if reason:
-            ttk.Label(frame, text=reason, wraplength=440, justify="left").grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            ttk.Label(frame, text=reason, wraplength=460, justify="left").grid(
+                row=row, column=0, columnspan=2, sticky="w", pady=(0, 10))
             row += 1
 
-        # --- API key
-        key_box = ttk.LabelFrame(frame, text="Anthropic API key", padding=8)
-        key_box.grid(row=row, column=0, columnspan=2, sticky="we")
-        row += 1
-        self.key_status = ttk.Label(key_box, text="", wraplength=420, justify="left")
-        self.key_status.grid(row=0, column=0, columnspan=3, sticky="w")
-        self.key_var = tk.StringVar()
-        self.key_entry = ttk.Entry(key_box, textvariable=self.key_var, show="*", width=44)
-        self.key_entry.grid(row=1, column=0, sticky="we", pady=(6, 0))
-        ttk.Button(key_box, text="Save key", command=self.on_save_key).grid(row=1, column=1, padx=(6, 0), pady=(6, 0))
-        ttk.Button(key_box, text="Remove", command=self.on_remove_key).grid(row=1, column=2, padx=(6, 0), pady=(6, 0))
-        ttk.Label(
-            key_box, wraplength=420, justify="left",
-            text="Get a key in the Anthropic Console (API keys), then paste it here. "
-                 "It is stored in Windows Credential Manager, not in a file.",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
-
-        # --- model and effort
-        def add_row(label: str, widget: tk.Widget) -> None:
+        def add_row(parent, label: str, widget: tk.Widget, first: bool = False) -> None:
             nonlocal row
-            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=(10, 0))
-            widget.grid(row=row, column=1, sticky="we", pady=(10, 0), padx=(10, 0))
+            pad = (0 if first else 10, 0)
+            ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=pad)
+            widget.grid(row=row, column=1, sticky="we", pady=pad, padx=(10, 0))
             row += 1
 
-        self._model_ids = list(MODELS)
-        self.model_box = ttk.Combobox(frame, state="readonly", width=46, values=[MODELS[m].label for m in self._model_ids])
-        self.model_box.current(self._model_ids.index(settings.model) if settings.model in MODELS else 0)
-        add_row("Claude model:", self.model_box)
+        # --- where questions go
+        self._send_to_ids = list(SEND_TO_CHOICES)
+        self.send_to_box = ttk.Combobox(
+            frame, state="readonly", width=52, values=[SEND_TO_LABELS[t] for t in self._send_to_ids])
+        self.send_to_box.current(
+            self._send_to_ids.index(settings.send_to) if settings.send_to in SEND_TO_CHOICES else 0)
+        add_row(frame, "Send questions to:", self.send_to_box, first=True)
+        ttk.Label(
+            frame, wraplength=460, justify="left",
+            text="The Claude app and the Claude website use your normal Claude plan, so there is no "
+                 "extra bill: Claude opens with your question filled in, and you press Enter there.",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        row += 1
 
-        self._efforts = list(EFFORTS)
-        self.effort_box = ttk.Combobox(frame, state="readonly", width=46, values=[EFFORT_LABELS[e] for e in self._efforts])
-        self.effort_box.current(self._efforts.index(settings.effort) if settings.effort in EFFORTS else 1)
-        add_row("Thinking effort:", self.effort_box)
-
+        # --- hotkey and privacy
         self.hotkey_var = tk.StringVar(value=settings.hotkey)
         choices = HOTKEY_CHOICES if settings.hotkey in HOTKEY_CHOICES else [settings.hotkey, *HOTKEY_CHOICES]
-        self.hotkey_box = ttk.Combobox(frame, textvariable=self.hotkey_var, width=46, values=choices)
-        add_row("Hotkey:", self.hotkey_box)
-
-        self.limit_var = tk.StringVar(value=f"{settings.daily_limit_usd:.2f}")
-        add_row("Daily limit in $ (0 = none):", ttk.Entry(frame, textvariable=self.limit_var, width=12))
+        self.hotkey_box = ttk.Combobox(frame, textvariable=self.hotkey_var, width=52, values=choices)
+        add_row(frame, "Hotkey:", self.hotkey_box)
 
         self.title_var = tk.BooleanVar(value=settings.send_window_title)
         ttk.Checkbutton(
@@ -91,14 +83,53 @@ class SettingsDialog:
         row += 1
 
         ttk.Label(
-            frame, wraplength=440, justify="left",
+            frame, wraplength=460, justify="left",
             text="Private words: if a window's name contains one of these, Sidekick reads nothing from it. One per line.",
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 2))
         row += 1
-        self.private_text = tk.Text(frame, height=5, width=52, wrap="word")
+        self.private_text = tk.Text(frame, height=4, width=56, wrap="word")
         self.private_text.grid(row=row, column=0, columnspan=2, sticky="we")
         self.private_text.insert("1.0", "\n".join(settings.private_words))
         row += 1
+
+        # --- only for "Answer inside Sidekick"
+        api_box = ttk.LabelFrame(frame, text="Only for \"Answer inside Sidekick\" (API key, pay per use)", padding=8)
+        api_box.grid(row=row, column=0, columnspan=2, sticky="we", pady=(12, 0))
+        api_box.columnconfigure(1, weight=1)
+        outer_row, row = row + 1, 0
+
+        self.key_status = ttk.Label(api_box, text="", wraplength=440, justify="left")
+        self.key_status.grid(row=row, column=0, columnspan=2, sticky="w")
+        row += 1
+        key_row = ttk.Frame(api_box)
+        key_row.grid(row=row, column=0, columnspan=2, sticky="we", pady=(6, 0))
+        key_row.columnconfigure(0, weight=1)
+        self.key_var = tk.StringVar()
+        self.key_entry = ttk.Entry(key_row, textvariable=self.key_var, show="*", width=40)
+        self.key_entry.grid(row=0, column=0, sticky="we")
+        ttk.Button(key_row, text="Save key", command=self.on_save_key).grid(row=0, column=1, padx=(6, 0))
+        ttk.Button(key_row, text="Remove", command=self.on_remove_key).grid(row=0, column=2, padx=(6, 0))
+        row += 1
+        ttk.Label(
+            api_box, wraplength=440, justify="left",
+            text="Create a key at platform.claude.com/settings/keys. It is stored in Windows "
+                 "Credential Manager, not in a file. API use is billed separately from a Claude plan.",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        row += 1
+
+        self._model_ids = list(MODELS)
+        self.model_box = ttk.Combobox(api_box, state="readonly", width=44, values=[MODELS[m].label for m in self._model_ids])
+        self.model_box.current(self._model_ids.index(settings.model) if settings.model in MODELS else 0)
+        add_row(api_box, "Claude model:", self.model_box)
+
+        self._efforts = list(EFFORTS)
+        self.effort_box = ttk.Combobox(api_box, state="readonly", width=44, values=[EFFORT_LABELS[e] for e in self._efforts])
+        self.effort_box.current(self._efforts.index(settings.effort) if settings.effort in EFFORTS else 1)
+        add_row(api_box, "Thinking effort:", self.effort_box)
+
+        self.limit_var = tk.StringVar(value=f"{settings.daily_limit_usd:.2f}")
+        add_row(api_box, "Daily limit in $ (0 = none):", ttk.Entry(api_box, textvariable=self.limit_var, width=12))
+        row = outer_row
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=row, column=0, columnspan=2, sticky="e", pady=(12, 0))
@@ -107,7 +138,7 @@ class SettingsDialog:
 
         self._refresh_key_status()
         self.win.lift()
-        self.key_entry.focus_set()
+        (self.key_entry if settings.send_to == "api" else self.send_to_box).focus_set()
 
     @property
     def alive(self) -> bool:
@@ -128,7 +159,7 @@ class SettingsDialog:
         elif keystore.env_has_credentials():
             text = "Using the ANTHROPIC_API_KEY that is set on this computer."
         else:
-            text = "No key yet. Sidekick cannot ask Claude until you add one."
+            text = "No key saved. You only need one to show answers inside Sidekick."
         self.key_status.configure(text=text)
 
     def on_save_key(self) -> None:
@@ -175,6 +206,7 @@ class SettingsDialog:
             return
 
         old_hotkey = settings.hotkey
+        settings.send_to = self._send_to_ids[self.send_to_box.current()]
         settings.model = self._model_ids[self.model_box.current()]
         settings.effort = self._efforts[self.effort_box.current()]
         settings.hotkey = str(hotkey)

@@ -10,6 +10,7 @@ FakeKeyring, so no real hotkey, clipboard watcher, API key or internet is used.
 import gc
 import os
 import time
+import urllib.parse
 
 import pytest
 
@@ -54,6 +55,11 @@ class FakePlatform(Platform):
         self.started = []
         self.stops = 0
         self.taken = set()
+        self.app_installed = True
+        self.link_ok = True
+        self.chrome_ok = True
+        self.opened = []  # (how, link)
+        self.revealed = []
 
     def start_hotkey(self, hotkey, on_press):
         if str(hotkey) in self.taken:
@@ -72,6 +78,25 @@ class FakePlatform(Platform):
 
     def grab_clipboard_media(self):
         return self.media
+
+    def claude_app_installed(self):
+        return self.app_installed
+
+    def open_link(self, url):
+        if not self.link_ok or (url.startswith("claude:") and not self.app_installed):
+            return False
+        self.opened.append(("link", url))
+        return True
+
+    def open_in_chrome(self, url):
+        if not self.chrome_ok:
+            return False
+        self.opened.append(("chrome", url))
+        return True
+
+    def reveal_file(self, path):
+        self.revealed.append(path)
+        return True
 
 
 class FakeDialogs(Dialogs):
@@ -115,7 +140,7 @@ class Harness:
         self.settings_path = tmp_path / "config.json"
         self.spend = DailySpend(tmp_path / "usage.json")
         self.app = SidekickApp(
-            self.root, self.platform, settings or Settings(), self.spend,
+            self.root, self.platform, settings or Settings(send_to="api"), self.spend,
             settings_path=self.settings_path, dialogs=self.dialogs,
             client_factory=lambda s, key: ClaudeClient(s, api_key=key, base_url=api.base_url, max_retries=0),
         )
@@ -256,7 +281,7 @@ def test_ask_about_copied_text(h):
     assert h.popup.visible
     assert h.label(h.popup.where_label) == "From: Excel — Budget.xlsx - Excel"
     assert h.popup.context_text() == "=SUM(A1:A3"
-    assert "Nothing is sent until you click Ask" in h.label(h.popup.note_label)
+    assert "Nothing is sent until you say so" in h.label(h.popup.note_label)
     assert h.api.requests == []  # nothing is sent before Ask
 
     h.api.script.append(sse_events(["Add the missing", " bracket:\n=SUM(A1:A3)"]))
@@ -326,7 +351,7 @@ def test_private_window_reads_and_sends_nothing(h):
 
 
 def test_window_title_can_be_switched_off(tmp_path, monkeypatch, api):
-    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_window_title=False))
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="api", send_window_title=False))
     try:
         harness.set_key()
         harness.press_hotkey(EXCEL)
@@ -366,13 +391,13 @@ def test_missing_key_opens_settings_and_key_can_be_saved(h):
     assert h.api.requests == []
     dialog = h.app.settings_dialog
     assert dialog is not None and dialog.alive
-    assert "No key yet" in h.label(dialog.key_status)
+    assert "No key saved" in h.label(dialog.key_status)
 
     dialog.key_var.set("sk-ant-new-key")
     dialog.on_save_key()
     assert h.keyring.get_password(keystore.SERVICE, keystore.ACCOUNT) == "sk-ant-new-key"
     assert dialog.key_var.get() == ""  # the box is cleared after saving
-    assert h.label(h.app.key_label) == "API key: saved"
+    assert h.label(h.app.key_label).endswith("API key: saved")
 
 
 def test_odd_looking_key_is_double_checked(h):
@@ -521,8 +546,8 @@ def test_settings_are_saved_and_used(h):
     dialog.on_save()
 
     saved = load_settings(h.settings_path)
-    assert (saved.model, saved.effort, saved.hotkey, saved.daily_limit_usd, saved.send_window_title) == (
-        "claude-sonnet-5-5", "low", "ctrl+alt+k", 3.0, False)
+    assert (saved.send_to, saved.model, saved.effort, saved.hotkey, saved.daily_limit_usd, saved.send_window_title) == (
+        "api", "claude-sonnet-5-5", "low", "ctrl+alt+k", 3.0, False)
     assert h.platform.started[-1] == "ctrl+alt+k"
     assert h.label(h.app.hotkey_label) == "Hotkey: Ctrl+Alt+K"
     assert not dialog.alive
@@ -562,3 +587,189 @@ def test_closing_the_main_window(h):
     assert h.platform.stops >= 1
     with pytest.raises(tk.TclError):
         h.root.winfo_exists()
+
+
+# ------------------------------------- "use my Claude plan" (no API key)
+
+
+def q_of(url):
+    """The question carried inside a claude.ai link, decoded."""
+    return urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("q", [None])[0]
+
+
+@pytest.fixture
+def ho(tmp_path, monkeypatch, api):
+    """Sidekick with its default setting: questions open in the Claude app."""
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings())
+    yield harness
+    errors = list(harness.errors)
+    harness.close()
+    assert errors == [], f"the window code raised: {errors}"
+
+
+def open_in_claude(harness, question):
+    harness.popup.question_var.set(question)
+    harness.popup.ask_button.invoke()
+    harness.pump()
+
+
+def test_default_opens_the_claude_app_with_no_key(ho):
+    assert ho.app.settings.send_to == "claude_app"
+    assert "uses your Claude plan" in ho.label(ho.app.key_label)
+    assert ho.label(ho.app.spend_label) == ""
+    assert "click Open in Claude" in ho.label(ho.app.howto_label)
+
+    ho.copy("=SUM(A1:A3")
+    ho.press_hotkey(EXCEL)
+    assert str(ho.popup.ask_button.cget("text")) == "Open in Claude"
+    # Claude answers in its own window, so Sidekick's answer box is hidden
+    assert ho.popup.ask_button.winfo_ismapped()
+    assert not ho.popup.answer_frame.winfo_ismapped()
+    assert not ho.popup.copy_button.winfo_ismapped()
+    open_in_claude(ho, "Why is this formula wrong?")
+
+    assert ho.api.requests == []  # the API is not used at all
+    assert ho.app.settings_dialog is None  # and no key is asked for
+    (how, url), = ho.platform.opened
+    assert how == "link" and url.startswith("claude://claude.ai/new?q=")
+    assert q_of(url) == (
+        'I am working in Excel, in the window "Budget.xlsx - Excel".\n\n'
+        'Here is what I copied:\n"""\n=SUM(A1:A3\n"""\n\nWhy is this formula wrong?'
+    )
+    assert not ho.popup.visible
+    assert ho.root.clipboard_get() == "=SUM(A1:A3"  # your clipboard is left alone
+    assert ho.app.toast is not None
+    assert ho.app.toast_text == "Claude is opening in the Claude app. Then:\n1. Check the question, then press Enter."
+
+
+def test_long_text_goes_through_the_clipboard(ho):
+    long_text = "word " * 600
+    ho.copy(long_text)
+    ho.press_hotkey(EXCEL)
+    ho.popup.quick_buttons[2].invoke()  # Summarize
+    ho.pump()
+
+    (how, url), = ho.platform.opened
+    assert url == "claude://claude.ai/new"
+    pasted = ho.root.clipboard_get()
+    assert long_text.strip() in pasted
+    assert pasted.endswith("Summarize this in a few short points.")
+    assert "1. Press Ctrl+V to paste your question." in ho.app.toast_text
+    # Sidekick's own copy is not picked up as "just copied" next time
+    ho.press_hotkey(EXCEL)
+    assert ho.popup.context_text() == ""
+
+
+def test_snipped_picture_is_pasted_into_claude(ho):
+    ho.clear_clipboard()
+    ho.platform.media = Image.new("RGB", (800, 600), "white")
+    ho.press_hotkey(EXCEL)
+    open_in_claude(ho, "What does this chart show?")
+
+    (how, url), = ho.platform.opened
+    assert q_of(url).endswith("What does this chart show?")
+    assert "Press Ctrl+V to add your picture." in ho.app.toast_text
+    assert ho.platform.revealed == []
+
+
+def test_picture_no_longer_on_the_clipboard_is_offered_as_a_file(ho):
+    ho.clear_clipboard()
+    ho.platform.media = Image.new("RGB", (800, 600), "white")
+    ho.press_hotkey(EXCEL)
+    ho.platform.seq += 1  # something else was copied in the meantime
+    open_in_claude(ho, "What does this chart show?")
+
+    path, = ho.platform.revealed
+    assert path.endswith("Sidekick picture.png") and os.path.exists(path)
+    assert 'Drag "Sidekick picture.png" from the File Explorer window into Claude.' in ho.app.toast_text
+
+
+def test_attached_pdf_is_shown_in_file_explorer(ho, tmp_path):
+    ho.press_hotkey(EXCEL)
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    ho.dialogs.file = str(pdf)
+    ho.popup.attach_button.invoke()
+    open_in_claude(ho, "Summarize this report")
+
+    assert ho.platform.revealed == [str(pdf)]
+    assert 'Drag "report.pdf" from the File Explorer window into Claude.' in ho.app.toast_text
+    assert ho.api.count_requests == []  # no size check: nothing goes to the API
+
+
+def test_chrome_mode_uses_the_website_and_the_clipboard(tmp_path, monkeypatch, api):
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="chrome"))
+    try:
+        assert "the Claude website in Chrome" in harness.label(harness.app.key_label)
+        harness.copy("Bonjour tout le monde")
+        harness.press_hotkey(EXCEL)
+        open_in_claude(harness, "Translate this")
+        assert harness.platform.opened == [("chrome", "https://claude.ai/new")]
+        assert harness.root.clipboard_get().endswith("Translate this")
+        toast = harness.app.toast_text
+        assert toast.startswith("Claude is opening in Chrome. Then:")
+        assert "1. Press Ctrl+V to paste your question." in toast
+    finally:
+        harness.close()
+
+
+def test_without_the_claude_app_the_website_is_used(ho):
+    ho.platform.app_installed = False
+    ho.press_hotkey(EXCEL)
+    open_in_claude(ho, "Hello")
+    assert ho.platform.opened == [("chrome", "https://claude.ai/new")]
+    assert ho.app.toast_text.startswith("The Claude app is not installed")
+
+
+def test_without_chrome_the_usual_browser_is_used(tmp_path, monkeypatch, api):
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="chrome"))
+    try:
+        harness.platform.chrome_ok = False
+        harness.press_hotkey(EXCEL)
+        open_in_claude(harness, "Hello")
+        assert harness.platform.opened == [("link", "https://claude.ai/new")]
+        assert "Chrome was not found" in harness.app.toast_text
+        assert "Claude is opening in your web browser" in harness.app.toast_text
+    finally:
+        harness.close()
+
+
+def test_when_nothing_opens_the_question_is_copied(ho):
+    ho.platform.app_installed = False
+    ho.platform.chrome_ok = False
+    ho.platform.link_ok = False
+    ho.press_hotkey(EXCEL)
+    open_in_claude(ho, "Hello")
+    assert ho.dialogs.titles("error") == ["Could not open Claude"]
+    assert ho.root.clipboard_get().endswith("Hello")
+    assert ho.popup.visible  # the window stays, so nothing is lost
+
+
+def test_private_window_is_left_out_of_the_question(ho):
+    ho.copy("hunter2")
+    ho.press_hotkey(BITWARDEN)
+    open_in_claude(ho, "How do I make a strong password?")
+    (how, url), = ho.platform.opened
+    assert q_of(url) == "How do I make a strong password?"
+
+
+def test_secret_warning_also_applies_before_opening_claude(ho):
+    ho.copy("password: hunter2")
+    ho.press_hotkey(EXCEL)
+    ho.dialogs.answer = False
+    open_in_claude(ho, "Is this strong?")
+    assert ho.dialogs.titles("confirm") == ["This may contain a secret"]
+    assert ho.platform.opened == []
+
+
+def test_switching_to_answers_inside_sidekick(ho):
+    ho.app.open_settings()
+    dialog = ho.app.settings_dialog
+    dialog.send_to_box.current(2)  # "Answer inside Sidekick"
+    dialog.on_save()
+    assert ho.app.settings.send_to == "api"
+    assert load_settings(ho.settings_path).send_to == "api"
+    assert "API key: not set yet" in ho.label(ho.app.key_label)
+    ho.press_hotkey(EXCEL)
+    assert str(ho.popup.ask_button.cget("text")) == "Ask"
+    assert ho.popup.answer_frame.winfo_ismapped()  # answers show in Sidekick again

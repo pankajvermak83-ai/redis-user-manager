@@ -9,11 +9,12 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
 
-from .attachments import Attachment, AttachmentError, attachment_from_path
+from .attachments import Attachment, AttachmentError, attachment_from_path, save_to_temp_file
 from .capture import Capture, read_clipboard
 from .claude_client import AskError, AskResult, Conversation
 from .config import MODELS
 from .costs import format_money, input_cost
+from .handoff import build_chat_prompt
 from .privacy import find_secrets
 from .prompts import build_first_message, build_followup_message
 
@@ -81,6 +82,7 @@ class Popup:
         self._events: queue.Queue = queue.Queue()
         self._got_text = False
         self._pending: tuple = ("", None)  # (question, content) waiting on a size check
+        self._attachment_seq = None  # clipboard counter when a picture was picked up
         self._client = None  # the Claude client used by the current request
         self._pump_job = None
 
@@ -154,6 +156,7 @@ class Popup:
         # --- the answer
         answer_frame = ttk.Frame(outer)
         answer_frame.grid(row=5, column=0, sticky="nsew")
+        self.answer_frame = answer_frame
         answer_frame.columnconfigure(0, weight=1)
         answer_frame.rowconfigure(0, weight=1)
         self.answer = tk.Text(answer_frame, height=12, width=66, wrap="word", state="disabled", font=text_font)
@@ -202,6 +205,7 @@ class Popup:
         self.conversation = Conversation()
         self.capture = capture
         self.attachment = capture.attachment
+        self._attachment_seq = self.app.platform.clipboard_sequence()
         self.last_answer = ""
 
         if capture.private:
@@ -221,6 +225,7 @@ class Popup:
         self.question_var.set("")
         self.send_frame.configure(text="What will be sent to Claude (you can edit or delete it)")
         self._set_status("")
+        self.refresh_mode()
         self._update_controls()
 
         first_time = not self.visible
@@ -228,6 +233,17 @@ class Popup:
         if first_time:
             self._place_near_pointer()
         self.focus()
+
+    def refresh_mode(self) -> None:
+        """Name the main button after where the question goes. When Claude
+        answers in its own app, the answer box and its buttons are hidden."""
+        self.ask_button.configure(text=self.app.ask_label())
+        answers_here = self.app.settings.send_to == "api"
+        for widget in (self.answer_frame, self.copy_button, self.stop_button):
+            if answers_here:
+                widget.grid()
+            else:
+                widget.grid_remove()
 
     def focus(self) -> None:
         self.win.lift()
@@ -324,6 +340,7 @@ class Popup:
             self.ctx_text.insert("1.0", text)
         if attachment is not None:
             self.attachment = attachment
+            self._attachment_seq = self.app.platform.clipboard_sequence()
         self.note_label.configure(text=note)
         self._update_controls()
 
@@ -343,18 +360,23 @@ class Popup:
         if quick and first and not text and self.attachment is None:
             self._set_status("Copy something first (Ctrl+C) and click Paste clipboard, or type your own question.")
             return
-        if not app.has_key():
-            app.open_settings("To ask Claude, Sidekick needs your Anthropic API key. Paste it below.")
-            return
-        limit = app.settings.daily_limit_usd
-        spent = app.spend.today_total()
-        if limit > 0 and spent >= limit:
-            app.dialogs.info(
-                self.win, "Daily limit reached",
-                f"Today's estimated spending ({format_money(spent)}) has reached your daily limit "
-                f"of ${limit:.2f}.\n\nYou can raise the limit in Settings.",
-            )
-            return
+        handoff = app.settings.send_to != "api"  # use the Claude app or website
+        if not handoff:
+            if not app.has_key():
+                app.open_settings(
+                    "To show answers inside Sidekick, it needs an Anthropic API key. Paste it below, "
+                    "or choose to send questions to the Claude app instead (no key needed)."
+                )
+                return
+            limit = app.settings.daily_limit_usd
+            spent = app.spend.today_total()
+            if limit > 0 and spent >= limit:
+                app.dialogs.info(
+                    self.win, "Daily limit reached",
+                    f"Today's estimated spending ({format_money(spent)}) has reached your daily limit "
+                    f"of ${limit:.2f}.\n\nYou can raise the limit in Settings.",
+                )
+                return
 
         if first:
             if len(text) > app.settings.max_text_chars:
@@ -373,6 +395,9 @@ class Popup:
             ):
                 return
             window = self.capture.window if (app.settings.send_window_title and not self.capture.private) else None
+            if handoff:
+                self._hand_off(question, text, window)
+                return
             content: object = build_first_message(question, text, window, self.attachment)
             needs_count = self.attachment is not None and self.attachment.kind in ("pdf", "text")
         else:
@@ -397,6 +422,24 @@ class Popup:
             self._start_streaming(content)
         if self._pump_job is None:
             self._pump()
+
+    def _hand_off(self, question: str, text: str, window) -> None:
+        """Open a new Claude chat (app or website) with the question filled in."""
+        app = self.app
+        attachment = self.attachment
+        picture_on_clipboard = False
+        if attachment is not None and attachment.kind == "image" and not attachment.path:
+            # A snipped picture: still on the clipboard unless something else was copied since.
+            picture_on_clipboard = app.platform.clipboard_sequence() == self._attachment_seq
+            if not picture_on_clipboard:
+                try:
+                    save_to_temp_file(attachment)  # so it can be dragged into Claude instead
+                except OSError as e:
+                    app.dialogs.error(self.win, "Could not prepare the picture", f"The picture could not be saved ({e}).")
+                    return
+        prompt = build_chat_prompt(question, text, window, attachment)
+        if app.hand_off(prompt, attachment, picture_on_clipboard):
+            self.hide()
 
     def _run_in_background(self, target, *args) -> None:
         # The thread gets only plain objects (the queue, the Claude client,

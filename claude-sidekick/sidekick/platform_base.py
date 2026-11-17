@@ -8,6 +8,7 @@ platform_win.py.
 from __future__ import annotations
 
 import sys
+import webbrowser
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -63,6 +64,27 @@ class Platform:
     def grab_clipboard_media(self) -> object:
         """A PIL image, a list of file paths, or None."""
         return None
+
+    # --- handing a question to the Claude app or website
+
+    def claude_app_installed(self) -> bool:
+        """True if the Claude desktop app is installed (it handles claude:// links)."""
+        return False
+
+    def open_link(self, url: str) -> bool:
+        """Open a link with the program the system uses for it. True if it worked."""
+        try:
+            return bool(webbrowser.open(url))
+        except Exception:
+            return False
+
+    def open_in_chrome(self, url: str) -> bool:
+        """Open a web link in Google Chrome. False if Chrome is not found."""
+        return False
+
+    def reveal_file(self, path: str) -> bool:
+        """Show a file, selected, in the file manager."""
+        return False
 
 
 def get_platform() -> Platform:

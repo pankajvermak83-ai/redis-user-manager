@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import tempfile
 from dataclasses import dataclass
 
 # Formats Claude accepts as pictures.
@@ -32,6 +33,7 @@ class Attachment:
     media_type: str
     data: bytes
     detail: str = ""  # e.g. "1280 x 720" or "240 KB"
+    path: str = ""  # where the file is on disk ("" for a snipped picture)
 
     def describe(self) -> str:
         label = {"image": "Picture", "pdf": "PDF", "text": "File"}[self.kind]
@@ -107,9 +109,30 @@ def _decode_text(data: bytes) -> str:
         return data.decode("cp1252", errors="replace")
 
 
+def save_to_temp_file(attachment: Attachment) -> str:
+    """Save a picture to Windows' temporary folder (so it can be dragged into
+    another app) and return where it went. The same name is reused each time,
+    so these files do not pile up."""
+    folder = os.path.join(tempfile.gettempdir(), "Sidekick")
+    os.makedirs(folder, exist_ok=True)
+    ext = ".jpg" if attachment.media_type == "image/jpeg" else ".png"
+    path = os.path.join(folder, "Sidekick picture" + ext)
+    with open(path, "wb") as f:
+        f.write(attachment.data)
+    attachment.path = path
+    attachment.name = attachment.name or os.path.basename(path)
+    return path
+
+
 def attachment_from_path(path: str, max_edge: int) -> Attachment:
     """Load a file from disk as an attachment, or raise AttachmentError
     explaining (in plain words) why it cannot be used."""
+    attachment = _load_file(path, max_edge)
+    attachment.path = path
+    return attachment
+
+
+def _load_file(path: str, max_edge: int) -> Attachment:
     name = os.path.basename(path)
     ext = os.path.splitext(name)[1].lower()
     try:

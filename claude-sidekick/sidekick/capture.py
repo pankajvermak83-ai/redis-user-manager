@@ -86,7 +86,7 @@ def read_clipboard(
                 f"You copied {len(text):,} characters. Sidekick kept the first {limit:,}; "
                 "edit the box if you need a different part.",
             )
-        return text, None, "Your copied text is in the box. Nothing is sent until you click Ask."
+        return text, None, "Your copied text is in the box. Nothing is sent until you say so."
 
     media = read_media()
     if media is None:
@@ -101,13 +101,13 @@ def read_clipboard(
         except AttachmentError as e:
             return "", None, str(e)
         extra = f" ({len(paths) - 1} other copied file(s) were left out.)" if len(paths) > 1 else ""
-        return "", attachment, f"Attached the file you copied.{extra} Nothing is sent until you click Ask."
+        return "", attachment, f"Attached the file you copied.{extra} Nothing is sent until you say so."
 
     try:
         attachment = image_attachment(media, "", settings.max_image_edge)
     except AttachmentError as e:
         return "", None, str(e)
-    return "", attachment, "Attached the picture you copied. Nothing is sent until you click Ask."
+    return "", attachment, "Attached the picture you copied. Nothing is sent until you say so."
 
 
 def capture_context(
