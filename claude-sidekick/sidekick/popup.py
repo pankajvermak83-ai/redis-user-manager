@@ -12,7 +12,8 @@ from tkinter import font as tkfont
 from .attachments import Attachment, AttachmentError, attachment_from_path, save_to_temp_file
 from .capture import Capture, read_clipboard
 from .claude_client import AskError, AskResult, Conversation
-from .config import MODELS
+from . import services
+from .config import PROVIDER_NAMES
 from .costs import format_money, input_cost
 from .handoff import build_chat_prompt
 from .privacy import find_secrets
@@ -169,15 +170,17 @@ class Popup:
 
         bottom = ttk.Frame(outer)
         bottom.grid(row=6, column=0, sticky="we", pady=(8, 0))
-        bottom.columnconfigure(3, weight=1)
+        bottom.columnconfigure(4, weight=1)
         self.copy_button = ttk.Button(bottom, text="Copy answer", command=self.on_copy_answer)
         self.copy_button.grid(row=0, column=0)
+        self.paste_back_button = ttk.Button(bottom, text="Paste back", command=self.on_paste_back)
+        self.paste_back_button.grid(row=0, column=1, padx=(6, 0))
         self.stop_button = ttk.Button(bottom, text="Stop", command=self.on_stop)
-        self.stop_button.grid(row=0, column=1, padx=6)
+        self.stop_button.grid(row=0, column=2, padx=6)
         self.new_button = ttk.Button(bottom, text="New question", command=self.on_new_question)
-        self.new_button.grid(row=0, column=2)
-        self.status_label = ttk.Label(bottom, text="", anchor="e", justify="right", wraplength=300)
-        self.status_label.grid(row=0, column=3, sticky="e")
+        self.new_button.grid(row=0, column=3)
+        self.status_label = ttk.Label(bottom, text="", anchor="e", justify="right", wraplength=260)
+        self.status_label.grid(row=0, column=4, sticky="e")
 
         self._update_controls()
 
@@ -239,7 +242,7 @@ class Popup:
         answers in its own app, the answer box and its buttons are hidden."""
         self.ask_button.configure(text=self.app.ask_label())
         answers_here = self.app.settings.send_to == "api"
-        for widget in (self.answer_frame, self.copy_button, self.stop_button):
+        for widget in (self.answer_frame, self.copy_button, self.paste_back_button, self.stop_button):
             if answers_here:
                 widget.grid()
             else:
@@ -308,6 +311,7 @@ class Popup:
             widget.configure(state=state(not self._busy))
         self.stop_button.configure(state=state(self._busy))
         self.copy_button.configure(state=state(bool(self.last_answer)))
+        self.paste_back_button.configure(state=state(bool(self.last_answer) and not self._busy))
 
     # ------------------------------------------------- attachment buttons
 
@@ -363,9 +367,10 @@ class Popup:
         handoff = app.settings.send_to != "api"  # use the Claude app or website
         if not handoff:
             if not app.has_key():
+                name = PROVIDER_NAMES[app.settings.provider].replace(" API", "")
                 app.open_settings(
-                    "To show answers inside Sidekick, it needs an Anthropic API key. Paste it below, "
-                    "or choose to send questions to the Claude app instead (no key needed)."
+                    f"To show answers from {name} inside Sidekick, it needs an API key. Paste it below, "
+                    "or choose another AI service: Claude Code and Ollama need no key."
                 )
                 return
             limit = app.settings.daily_limit_usd
@@ -399,7 +404,8 @@ class Popup:
                 self._hand_off(question, text, window)
                 return
             content: object = build_first_message(question, text, window, self.attachment)
-            needs_count = self.attachment is not None and self.attachment.kind in ("pdf", "text")
+            needs_count = (app.settings.provider == "claude"  # only Claude can count tokens first
+                           and self.attachment is not None and self.attachment.kind in ("pdf", "text"))
         else:
             content = build_followup_message(question)
             needs_count = False
@@ -518,9 +524,12 @@ class Popup:
             self.last_answer = result.text
             self.question_var.set("")
             self.send_frame.configure(text="Sent with your first question")
-        info = MODELS.get(result.model)
-        name = info.short if info else (result.model or "Claude")
-        self._finish(f"{name} · about {format_money(result.cost_usd)} · today {format_money(total)}")
+        status = services.short_label(app.settings, result.model)
+        if result.cost_usd is not None:
+            status += f" \u00b7 about {format_money(result.cost_usd)} \u00b7 today {format_money(total)}"
+        elif app.settings.provider == "ollama":
+            status += " \u00b7 free, on this PC"
+        self._finish(status)
         self.question_entry.focus_set()
 
     def _on_error(self, error: AskError) -> None:
@@ -551,6 +560,14 @@ class Popup:
     def on_new_question(self) -> None:
         self.open(Capture(window=self.capture.window, private=self.capture.private,
                           note="Started a new question. Paste or attach what you want to ask about."))
+
+    def auto_ask(self, prompt: str) -> None:
+        """One-key mode: ask right away, as if a quick button was clicked."""
+        self.on_ask(prompt, quick=True)
+
+    def on_paste_back(self) -> None:
+        if self.last_answer and not self._busy:
+            self.app.paste_back(self.last_answer, self.capture.window)
 
     def on_copy_answer(self) -> None:
         if not self.last_answer:

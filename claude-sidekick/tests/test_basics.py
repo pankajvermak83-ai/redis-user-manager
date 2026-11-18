@@ -384,3 +384,53 @@ def test_snipped_picture_can_be_saved_for_dragging(tmp_path, monkeypatch):
     assert snip.path == path and snip.name == "Sidekick picture.png"
     with Image.open(path) as img:
         assert img.size == (20, 10)
+
+
+# ------------------------------------------------ AI services, one key, prices
+
+
+def test_ai_service_settings():
+    s = Settings()
+    assert (s.instant, s.hotkey_action, s.provider) == (True, "smart", "claude_code")
+    loaded = Settings.from_dict({
+        "instant": False, "hotkey_action": "fix", "provider": "gemini",
+        "gemini_model": " gemini-9-flash ", "ollama_url": "http://192.168.1.5:11434/v1/",
+        "custom_url": "ftp://nope", "model": "claude-future-9",
+        "prices": {"gemini": [0.3, 2.5], "custom": ["a", 1], "nobody": [1, 1], "claude": [1, 2, 3]},
+    })
+    assert (loaded.instant, loaded.hotkey_action, loaded.provider) == (False, "fix", "gemini")
+    assert loaded.gemini_model == "gemini-9-flash"  # new model names can be typed in
+    assert loaded.ollama_url == "http://192.168.1.5:11434/v1"
+    assert loaded.custom_url == ""  # not a web address: ignored
+    assert loaded.model == "claude-future-9"
+    assert loaded.prices == {"gemini": [0.3, 2.5]}  # bad price entries are dropped
+    assert Settings.from_dict({"provider": "skynet", "hotkey_action": "dance", "model": "gpt-5"}) == Settings()
+
+
+def test_your_prices_replace_the_built_in_ones():
+    use = usage(input_tokens=1000, output_tokens=500, cache_read_input_tokens=1000)
+    assert estimate_cost("claude-opus-5-5", use, [1.0, 2.0]) == pytest.approx((2000 * 1 + 500 * 2) / 1_000_000)
+    assert estimate_cost("claude-future-9", use) is None  # unknown model, no prices given
+    assert estimate_cost("claude-future-9", use, [1.0, 2.0]) is not None
+
+
+def test_each_service_has_its_own_key(monkeypatch):
+    from sidekick import keystore, services
+
+    store = {}
+    fake = type("FakeKeyring", (), {
+        "get_password": staticmethod(lambda svc, acct: store.get(acct)),
+        "set_password": staticmethod(lambda svc, acct, value: store.__setitem__(acct, value)),
+        "delete_password": staticmethod(lambda svc, acct: store.pop(acct, None)),
+    })
+    monkeypatch.setattr(keystore, "_keyring", lambda: fake)
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    keystore.save_api_key("AIza-1", keystore.GEMINI_ACCOUNT)
+    assert services.load_key("gemini") == "AIza-1" and services.load_key("claude") is None
+    assert services.has_key(Settings(provider="gemini")) and not services.has_key(Settings(provider="claude"))
+    assert services.has_key(Settings(provider="claude_code")) and services.has_key(Settings(provider="ollama"))
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-env")
+    keystore.delete_api_key(keystore.GEMINI_ACCOUNT)
+    assert services.load_key("gemini") == "AIza-env"

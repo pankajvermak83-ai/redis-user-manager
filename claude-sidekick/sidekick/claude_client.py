@@ -25,6 +25,12 @@ log = logging.getLogger(__name__)
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
+def wants_fallbacks(model: str) -> bool:
+    """Ask for a backup model only for models known to support it."""
+    info = MODELS.get(model)
+    return bool(info and info.fallbacks)
+
+
 class AskError(Exception):
     """Something went wrong; the message is ready to show to the user."""
 
@@ -179,7 +185,7 @@ class ClaudeClient:
             # Follow-up questions re-send the same beginning; caching makes
             # that repeated part much cheaper.
             args["cache_control"] = {"type": "ephemeral"}
-        if MODELS[model].fallbacks and self._fallbacks_ok:
+        if wants_fallbacks(model) and self._fallbacks_ok:
             args["betas"] = [FALLBACK_BETA]
             args["fallbacks"] = "default"
         return args
@@ -218,7 +224,7 @@ class ClaudeClient:
             except anthropic.BadRequestError as e:
                 # Some accounts may not have the backup-model feature. If the
                 # API says so, switch it off for this session and try once more.
-                if attempt == 1 and self._fallbacks_ok and MODELS[model].fallbacks and "anthropic-beta" in _api_message(e).lower():
+                if attempt == 1 and self._fallbacks_ok and wants_fallbacks(model) and "anthropic-beta" in _api_message(e).lower():
                     log.warning("Backup-model feature was rejected; continuing without it.")
                     self._fallbacks_ok = False
                     continue
@@ -239,7 +245,7 @@ class ClaudeClient:
             text="".join(b.text for b in final.content if b.type == "text"),
             stop_reason=final.stop_reason,
             model=final.model,
-            cost_usd=estimate_cost(final.model, final.usage),
+            cost_usd=estimate_cost(final.model, final.usage, self._settings.prices.get("claude")),
             input_tokens=int(getattr(final.usage, "input_tokens", 0) or 0),
             output_tokens=int(getattr(final.usage, "output_tokens", 0) or 0),
         )

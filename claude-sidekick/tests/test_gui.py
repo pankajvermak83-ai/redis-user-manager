@@ -8,7 +8,9 @@ FakeKeyring, so no real hotkey, clipboard watcher, API key or internet is used.
 """
 
 import gc
+import json
 import os
+import sys
 import time
 import urllib.parse
 
@@ -18,17 +20,23 @@ tk = pytest.importorskip("tkinter")
 Image = pytest.importorskip("PIL.Image")
 
 from fake_api import FakeAnthropic, api_error, sse_events  # noqa: E402
-from sidekick import keystore  # noqa: E402
+from fake_compat import FakeCompat, chunks  # noqa: E402
+from sidekick import keystore, services  # noqa: E402
 from sidekick.app import SidekickApp  # noqa: E402
 from sidekick.capture import TIP  # noqa: E402
-from sidekick.claude_client import ClaudeClient  # noqa: E402
+from sidekick.config import SMART_PROMPT  # noqa: E402
 from sidekick.config import Settings, load_settings  # noqa: E402
 from sidekick.costs import DailySpend  # noqa: E402
 from sidekick.platform_base import Platform, WindowInfo  # noqa: E402
 from sidekick.popup import Dialogs  # noqa: E402
 
-EXCEL = WindowInfo("Budget.xlsx - Excel", "excel.exe", 4321)
+EXCEL = WindowInfo("Budget.xlsx - Excel", "excel.exe", 4321, hwnd=4321)
+WORD = WindowInfo("Letter.docx - Word", "winword.exe", 4322, hwnd=4322)
 BITWARDEN = WindowInfo("My vault - Bitwarden", "bitwarden.exe", 555)
+FAKE_CLAUDE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_claude.py")
+# The settings the older tests were written for: answers inside Sidekick from
+# the Claude API, and the hotkey only opens the window.
+API = dict(send_to="api", provider="claude", instant=False)
 
 
 class FakeKeyring:
@@ -60,6 +68,11 @@ class FakePlatform(Platform):
         self.chrome_ok = True
         self.opened = []  # (how, link)
         self.revealed = []
+        self.selection = None  # text "selected" in the app in front, for one-key mode
+        self.copy_calls = []
+        self.on_copy = None  # set by the Harness: puts text on the clipboard
+        self.pasted = []
+        self.paste_ok = True
 
     def start_hotkey(self, hotkey, on_press):
         if str(hotkey) in self.taken:
@@ -97,6 +110,17 @@ class FakePlatform(Platform):
     def reveal_file(self, path):
         self.revealed.append(path)
         return True
+
+    def copy_selection(self, window):
+        self.copy_calls.append(window)
+        if self.selection is None:
+            return False
+        self.on_copy(self.selection)
+        return True
+
+    def paste_into(self, window):
+        self.pasted.append(window)
+        return self.paste_ok
 
 
 class FakeDialogs(Dialogs):
@@ -139,10 +163,13 @@ class Harness:
         self.dialogs = FakeDialogs()
         self.settings_path = tmp_path / "config.json"
         self.spend = DailySpend(tmp_path / "usage.json")
+        self.platform.on_copy = self.copy
         self.app = SidekickApp(
-            self.root, self.platform, settings or Settings(send_to="api"), self.spend,
+            self.root, self.platform, settings or Settings(**API), self.spend,
             settings_path=self.settings_path, dialogs=self.dialogs,
-            client_factory=lambda s, key: ClaudeClient(s, api_key=key, base_url=api.base_url, max_retries=0),
+            client_factory=lambda s: services.make_client(
+                s, claude_kwargs={"base_url": api.base_url, "max_retries": 0},
+                claude_code_command=[sys.executable, FAKE_CLAUDE]),
         )
         self.errors = []
         self.root.report_callback_exception = lambda *exc: self.errors.append(exc)
@@ -183,7 +210,7 @@ class Harness:
         self.platform.seq += 1
 
     def press_hotkey(self, window=EXCEL):
-        self.app.hotkey_events.put(window)
+        self.app._on_hotkey(window)  # what the hotkey thread does
         self.app.process_events()
         self.pump()
 
@@ -351,7 +378,7 @@ def test_private_window_reads_and_sends_nothing(h):
 
 
 def test_window_title_can_be_switched_off(tmp_path, monkeypatch, api):
-    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="api", send_window_title=False))
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(**API, send_window_title=False))
     try:
         harness.set_key()
         harness.press_hotkey(EXCEL)
@@ -600,7 +627,7 @@ def q_of(url):
 @pytest.fixture
 def ho(tmp_path, monkeypatch, api):
     """Sidekick with its default setting: questions open in the Claude app."""
-    harness = Harness(tmp_path, monkeypatch, api, settings=Settings())
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(instant=False))
     yield harness
     errors = list(harness.errors)
     harness.close()
@@ -698,7 +725,7 @@ def test_attached_pdf_is_shown_in_file_explorer(ho, tmp_path):
 
 
 def test_chrome_mode_uses_the_website_and_the_clipboard(tmp_path, monkeypatch, api):
-    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="chrome"))
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="chrome", instant=False))
     try:
         assert "the Claude website in Chrome" in harness.label(harness.app.key_label)
         harness.copy("Bonjour tout le monde")
@@ -722,7 +749,7 @@ def test_without_the_claude_app_the_website_is_used(ho):
 
 
 def test_without_chrome_the_usual_browser_is_used(tmp_path, monkeypatch, api):
-    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="chrome"))
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="chrome", instant=False))
     try:
         harness.platform.chrome_ok = False
         harness.press_hotkey(EXCEL)
@@ -769,7 +796,253 @@ def test_switching_to_answers_inside_sidekick(ho):
     dialog.on_save()
     assert ho.app.settings.send_to == "api"
     assert load_settings(ho.settings_path).send_to == "api"
-    assert "API key: not set yet" in ho.label(ho.app.key_label)
+    # the default AI service needs no API key: Claude Code with your Claude plan
+    assert "from Claude Code on this PC" in ho.label(ho.app.key_label)
     ho.press_hotkey(EXCEL)
     assert str(ho.popup.ask_button.cget("text")) == "Ask"
     assert ho.popup.answer_frame.winfo_ismapped()  # answers show in Sidekick again
+
+
+# --------------------------------------- one key: select, press, get the answer
+
+import contextlib  # noqa: E402
+
+
+@pytest.fixture
+def compat():
+    server = FakeCompat().start()
+    yield server
+    server.stop()
+
+
+@contextlib.contextmanager
+def started(tmp_path, monkeypatch, api, **settings):
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(**settings))
+    try:
+        yield harness
+        assert harness.errors == [], f"the window code raised: {harness.errors}"
+    finally:
+        harness.close()
+
+
+def press_and_wait(h, window=WORD, selection="Ths sentense has erors."):
+    h.platform.selection = selection
+    h.press_hotkey(window)
+    h.wait(lambda: not h.popup._busy)
+
+
+def test_one_key_answer_with_the_claude_api(tmp_path, monkeypatch, api):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="claude") as h:
+        h.set_key()
+        api.script.append(sse_events(["This sentence has errors."]))
+        press_and_wait(h)
+        assert h.platform.copy_calls == [WORD]
+        assert h.label(h.popup.note_label) == "Sidekick copied your selection."
+        assert h.popup.context_text() == "Ths sentense has erors."
+        text = h.sent_text()
+        assert "<copied_text>\nThs sentense has erors.\n</copied_text>" in text
+        assert text.endswith(f"<question>\n{SMART_PROMPT}\n</question>")
+        assert h.popup.visible and h.popup.answer_text().endswith("This sentence has errors.")
+        assert str(h.popup.paste_back_button.cget("state")) == "normal"
+        # the selection Sidekick copied is not reused on the next press
+        h.platform.selection = None
+        h.press_hotkey(WORD)
+        assert h.popup.context_text() == "" and len(api.requests) == 1
+
+
+def test_one_key_answer_with_gemini(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="gemini",
+                 gemini_base_url=compat.base_url) as h:
+        h.keyring.set_password(keystore.SERVICE, keystore.GEMINI_ACCOUNT, "AIza-test")
+        h.app.on_key_changed()
+        assert "Google Gemini (gemini-3.5-flash-lite)" in h.label(h.app.key_label)
+        compat.script.append(chunks(["Hello, ", "how are you?"]))
+        press_and_wait(h, selection="Bonjour, comment allez-vous ?")
+        sent = compat.requests[0]
+        assert sent["headers"]["authorization"] == "Bearer AIza-test"
+        assert sent["body"]["model"] == "gemini-3.5-flash-lite"
+        question = sent["body"]["messages"][1]["content"]
+        assert "Bonjour, comment allez-vous ?" in question and SMART_PROMPT in question
+        assert h.popup.answer_text().endswith("Hello, how are you?")
+        assert h.label(h.popup.status_label) == "Gemini · gemini-3.5-flash-lite"
+        assert api.requests == []
+
+
+def test_one_key_answer_with_ollama_on_this_pc(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url) as h:
+        compat.script.append(chunks(["Local answer."]))
+        press_and_wait(h)
+        assert "authorization" not in compat.requests[0]["headers"]
+        assert compat.requests[0]["body"]["model"] == "gemma4:e4b"
+        assert h.popup.answer_text().endswith("Local answer.")
+        assert h.label(h.popup.status_label) == "Ollama · gemma4:e4b · free, on this PC"
+
+
+def test_one_key_answer_with_claude_code(tmp_path, monkeypatch, api):
+    log = tmp_path / "claude-calls.jsonl"
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "ok")
+    monkeypatch.setattr("sidekick.claude_code_client.config_dir", lambda: tmp_path / "sidekick")
+    with started(tmp_path, monkeypatch, api, send_to="api") as h:  # Claude Code is the default service
+        assert h.app.settings.provider == "claude_code"
+        assert "no API key, no extra bill" in h.label(h.app.key_label)
+        press_and_wait(h)
+        assert h.popup.answer_text().endswith("Claude Code says hi.")
+        assert h.label(h.popup.status_label) == "Claude Code (your Claude plan)"
+        prompt = json.loads(log.read_text().splitlines()[0])["stdin"]
+        assert "Ths sentense has erors." in prompt and SMART_PROMPT in prompt
+        assert api.requests == []
+
+
+def test_another_service_with_your_own_prices(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="custom", custom_name="Groq",
+                 custom_url=compat.base_url, custom_model="llama-4", prices={"custom": [1.0, 2.0]}) as h:
+        compat.script.append(chunks(["Done."], usage={"prompt_tokens": 1000, "completion_tokens": 500}))
+        press_and_wait(h)
+        assert compat.requests[0]["body"]["model"] == "llama-4"
+        assert h.label(h.popup.status_label) == "Groq · llama-4 · about 0.2¢ · today 0.2¢"
+        assert h.spend.today_total() == pytest.approx(0.002)
+
+
+def test_the_hotkey_action_can_be_chosen(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url,
+                 hotkey_action="summarize") as h:
+        press_and_wait(h, selection="A long report...")
+        assert "Summarize this in a few short points." in compat.requests[0]["body"]["messages"][1]["content"]
+
+
+def test_only_open_the_window(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url,
+                 hotkey_action="open") as h:
+        press_and_wait(h, selection="Some text")
+        assert h.popup.context_text() == "Some text"  # copied for you, but not sent
+        assert compat.requests == []
+
+
+def test_nothing_selected_just_opens_the_window(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url) as h:
+        press_and_wait(h, selection=None)
+        assert h.platform.copy_calls == [WORD]
+        assert h.label(h.popup.note_label) == TIP
+        assert compat.requests == []
+
+
+def test_private_windows_are_never_copied(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url) as h:
+        press_and_wait(h, window=BITWARDEN, selection="hunter2")
+        assert h.platform.copy_calls == []  # Sidekick did not press any keys there
+        assert compat.requests == []
+
+
+def test_a_fresh_snip_is_asked_about_right_away(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url) as h:
+        h.clear_clipboard()
+        h.platform.media = Image.new("RGB", (40, 30), "white")
+        press_and_wait(h, selection=None)
+        parts = compat.requests[0]["body"]["messages"][1]["content"]
+        assert parts[0]["type"] == "image_url" and parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_one_key_with_the_claude_app_opens_it_straight_away(tmp_path, monkeypatch, api):
+    with started(tmp_path, monkeypatch, api) as h:  # all defaults: the Claude app, one-key mode on
+        press_and_wait(h, selection="=VLOOKUP(A2,B:C,2)")
+        (how, url), = h.platform.opened
+        question = q_of(url)
+        assert '"""\n=VLOOKUP(A2,B:C,2)\n"""' in question and question.endswith(SMART_PROMPT)
+        assert not h.popup.visible
+
+
+def test_paste_back_into_your_app(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url,
+                 hotkey_action="improve") as h:
+        compat.script.append(chunks(["This sentence has errors."]))
+        press_and_wait(h)
+        h.popup.paste_back_button.invoke()
+        h.pump(0.2)
+        assert h.root.clipboard_get() == "This sentence has errors."
+        assert h.platform.pasted == [WORD]
+        assert not h.popup.visible and h.app.toast is None
+
+        compat.script.append(chunks(["Again."]))
+        h.platform.paste_ok = False  # e.g. the app was closed meanwhile
+        press_and_wait(h)
+        h.popup.paste_back_button.invoke()
+        h.pump(0.2)
+        assert "Click where you want it, then press Ctrl+V" in h.app.toast_text
+
+
+def test_gemini_without_a_key_opens_settings(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="gemini",
+                 gemini_base_url=compat.base_url) as h:
+        press_and_wait(h)
+        dialog = h.app.settings_dialog
+        assert dialog is not None and dialog.alive
+        assert h.label(dialog.key_label) == "Gemini API key:"
+        assert compat.requests == []
+
+
+def choose_service(dialog, provider):
+    dialog.provider_box.current(dialog._provider_ids.index(provider))
+    dialog.provider_box.event_generate("<<ComboboxSelected>>")
+
+
+def test_settings_ai_service_tab(tmp_path, monkeypatch, api):
+    with started(tmp_path, monkeypatch, api) as h:
+        h.app.open_settings()
+        h.pump()
+        d = h.app.settings_dialog
+        d.send_to_box.current(2)  # answer inside Sidekick
+        d.action_box.current(list(d._action_ids).index("fix"))
+        choose_service(d, "gemini")
+        h.pump()
+        assert h.label(d.key_label) == "Gemini API key:"
+        assert "No key saved" in h.label(d.key_status)
+        d.key_var.set("AIza-123")
+        d.on_save_key()
+        assert h.keyring.get_password(keystore.SERVICE, keystore.GEMINI_ACCOUNT) == "AIza-123"
+        assert h.keyring.get_password(keystore.SERVICE, keystore.ACCOUNT) is None
+        d.gemini_model_var.set("gemini-3.8-flash")
+
+        choose_service(d, "custom")
+        h.pump()
+        d.custom_name_var.set("DeepSeek")
+        d.custom_url_var.set("https://api.example.com/v1/")
+        d.custom_model_var.set("chat-model")
+        d.price_in_var.set("0.27")
+        d.price_out_var.set("1.10")
+        d.on_save()
+
+        saved = load_settings(h.settings_path)
+        assert (saved.send_to, saved.provider, saved.hotkey_action) == ("api", "custom", "fix")
+        assert (saved.custom_name, saved.custom_url, saved.custom_model) == (
+            "DeepSeek", "https://api.example.com/v1", "chat-model")
+        assert saved.gemini_model == "gemini-3.8-flash"
+        assert saved.prices == {"custom": [0.27, 1.1]}
+        assert "DeepSeek (chat-model)" in h.label(h.app.key_label)
+
+
+def test_settings_check_what_you_type(tmp_path, monkeypatch, api):
+    with started(tmp_path, monkeypatch, api) as h:
+        h.app.open_settings()
+        d = h.app.settings_dialog
+        choose_service(d, "custom")
+        h.pump()
+        d.on_save()
+        assert h.dialogs.titles("error") == ["Other service"]  # address and model are needed
+        d.custom_url_var.set("api.example.com")
+        d.custom_model_var.set("m")
+        d.on_save()
+        assert h.dialogs.titles("error")[-1] == "Address"
+        d.custom_url_var.set("https://api.example.com/v1")
+        d.price_in_var.set("cheap")
+        d.on_save()
+        assert h.dialogs.titles("error")[-1] == "Prices"
+        d.price_in_var.set("")
+        choose_service(d, "claude")
+        h.pump()
+        d.model_var.set("gpt-5")
+        d.on_save()
+        assert h.dialogs.titles("error")[-1] == "Claude model"
+        d.model_var.set("claude-haiku-5-5")
+        d.on_save()
+        assert not d.alive and load_settings(h.settings_path).model == "claude-haiku-5-5"

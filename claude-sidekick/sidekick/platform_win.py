@@ -22,6 +22,7 @@ import ntpath
 import os
 import subprocess
 import threading
+import time
 from ctypes import wintypes
 from typing import Callable, Optional
 
@@ -55,6 +56,45 @@ _NAMED_KEYS = {
 
 
 CHROME_APP_PATH = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+
+# --- pressing keys for you (one-key mode) ---------------------------------
+INPUT_KEYBOARD = 1
+KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP = 0x0001, 0x0002
+MAPVK_VK_TO_VSC = 0
+VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN = 0x10, 0x11, 0x12, 0x5B, 0x5C
+VK_INSERT, VK_C, VK_V = 0x2D, 0x43, 0x56
+EXTENDED_KEYS = {VK_INSERT}
+SIDEKICK_TAG = 0x51DE  # marks the key presses Sidekick makes
+
+# Terminals: Ctrl+C there stops the running program when nothing is
+# selected, so Sidekick copies only with Ctrl+Insert in them.
+TERMINAL_APPS = frozenset({
+    "windowsterminal.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "conhost.exe",
+    "openconsole.exe", "wsl.exe", "bash.exe", "mintty.exe", "putty.exe", "kitty.exe",
+    "alacritty.exe", "wezterm-gui.exe", "hyper.exe", "tabby.exe", "ubuntu.exe",
+})
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD), ("wParamH", wintypes.WORD)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
 
 
 def protocol_registered(winreg, scheme: str) -> bool:
@@ -149,6 +189,11 @@ def _declare(api: Win32Api) -> None:
     sig(u.GetClipboardSequenceNumber, [], wintypes.DWORD)
     sig(u.RegisterClipboardFormatW, [wintypes.LPCWSTR], wintypes.UINT)
     sig(u.IsClipboardFormatAvailable, [wintypes.UINT], wintypes.BOOL)
+    sig(u.SendInput, [wintypes.UINT, P(INPUT), ctypes.c_int], wintypes.UINT)
+    sig(u.GetAsyncKeyState, [ctypes.c_int], ctypes.c_short)
+    sig(u.MapVirtualKeyW, [wintypes.UINT, wintypes.UINT], wintypes.UINT)
+    sig(u.SetForegroundWindow, [wintypes.HWND], wintypes.BOOL)
+    sig(u.IsWindow, [wintypes.HWND], wintypes.BOOL)
 
     sig(k.GetCurrentThreadId, [], wintypes.DWORD)
     sig(k.OpenProcess, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE)
@@ -229,6 +274,11 @@ class WindowsPlatform(Platform):
         self._popen = popen or subprocess.Popen
         self._isfile = isfile or os.path.isfile
         self._environ = environ if environ is not None else os.environ
+        self._hotkey_vk = 0
+        # How long to wait (seconds): for you to let go of the hotkey, and for
+        # an app to finish copying or to come to the front.
+        self.release_timeout = 1.0
+        self.copy_timeout = 0.6
 
     def _reg(self):
         if self._winreg is None:
@@ -253,6 +303,7 @@ class WindowsPlatform(Platform):
     def start_hotkey(self, hotkey: Hotkey, on_press: Callable[[Optional[WindowInfo]], None]) -> tuple[bool, str]:
         self.stop_hotkey()
         thread = _HotkeyThread(self._api, hotkey, on_press, self.foreground_window)
+        self._hotkey_vk = virtual_key(hotkey.key)
         thread.start()
         if not thread.ready.wait(timeout=3.0):
             return False, "Windows did not answer."
@@ -290,7 +341,7 @@ class WindowsPlatform(Platform):
                     exe = ntpath.basename(path_buf.value).lower()
             finally:
                 k.CloseHandle(handle)
-        return WindowInfo(title=title_buf.value, exe=exe, pid=int(pid.value))
+        return WindowInfo(title=title_buf.value, exe=exe, pid=int(pid.value), hwnd=int(hwnd))
 
     # ---------------------------------------------------------- clipboard
 
@@ -313,6 +364,71 @@ class WindowsPlatform(Platform):
         except Exception as e:
             log.warning("Could not read a picture from the clipboard: %s", type(e).__name__)
             return None
+
+    # ------------------------------------------------------ one-key mode
+
+    def _keys_released(self) -> bool:
+        """Wait until you have let go of Ctrl, Shift, Alt, Win and the hotkey's
+        own key. Sending Ctrl+C while Shift is still down would press
+        Ctrl+Shift+C instead, which does something else in many apps."""
+        keys = [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN] + ([self._hotkey_vk] if self._hotkey_vk else [])
+        deadline = time.monotonic() + self.release_timeout
+        while True:
+            if not any(self._api.user32.GetAsyncKeyState(vk) & 0x8000 for vk in keys):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.015)
+
+    def _press(self, modifier: int, key: int) -> bool:
+        """Press and release modifier+key, the way a keyboard would."""
+        u = self._api.user32
+        steps = [(modifier, 0), (key, 0), (key, KEYEVENTF_KEYUP), (modifier, KEYEVENTF_KEYUP)]
+        events = (INPUT * len(steps))()
+        for event, (vk, flags) in zip(events, steps):
+            if vk in EXTENDED_KEYS:
+                flags |= KEYEVENTF_EXTENDEDKEY
+            event.type = INPUT_KEYBOARD
+            event.u.ki = KEYBDINPUT(vk, u.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC), flags, 0, SIDEKICK_TAG)
+        return u.SendInput(len(steps), events, ctypes.sizeof(INPUT)) == len(steps)
+
+    def _clipboard_changed_since(self, before: int) -> bool:
+        deadline = time.monotonic() + self.copy_timeout
+        while time.monotonic() < deadline:
+            if self.clipboard_sequence() != before:
+                return True
+            time.sleep(0.02)
+        return self.clipboard_sequence() != before
+
+    def copy_selection(self, window: WindowInfo | None) -> bool:
+        """Copy the selection in the window in front: first with Ctrl+Insert
+        (the classic copy key, harmless everywhere), then with Ctrl+C if the
+        app ignored that, except in terminals."""
+        if window is None or not self._keys_released():
+            return False
+        before = self.clipboard_sequence()
+        if self._press(VK_CONTROL, VK_INSERT) and self._clipboard_changed_since(before):
+            return True
+        if window.exe in TERMINAL_APPS:
+            return False
+        return self._press(VK_CONTROL, VK_C) and self._clipboard_changed_since(before)
+
+    def paste_into(self, window: WindowInfo | None) -> bool:
+        u = self._api.user32
+        if window is None or not window.hwnd or not u.IsWindow(window.hwnd):
+            return False
+        u.SetForegroundWindow(window.hwnd)  # allowed: you just clicked in Sidekick
+        deadline = time.monotonic() + self.copy_timeout
+        while (u.GetForegroundWindow() or 0) != window.hwnd:
+            if time.monotonic() >= deadline:
+                return False  # it did not come to the front, so don't paste anywhere
+            time.sleep(0.02)
+        if not self._keys_released():
+            return False
+        time.sleep(0.05)  # let the app get ready for typing
+        if window.exe in TERMINAL_APPS:
+            return self._press(VK_SHIFT, VK_INSERT)
+        return self._press(VK_CONTROL, VK_V)
 
     # ------------------------------------------------- Claude app / website
 

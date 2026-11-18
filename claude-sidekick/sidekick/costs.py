@@ -57,14 +57,28 @@ def _one(model: str, part: object) -> float | None:
     ) / 1_000_000
 
 
-def estimate_cost(model: str, usage: object) -> float | None:
+def priced(input_tokens: int, output_tokens: int, rates: list | tuple) -> float:
+    """Dollars for this many tokens at your own [input, output] prices per million."""
+    return (input_tokens * rates[0] + output_tokens * rates[1]) / 1_000_000
+
+
+def estimate_cost(model: str, usage: object, rates_override: list | tuple | None = None) -> float | None:
     """Estimated dollars for one reply. Returns None if the price is unknown.
 
     When a backup model stepped in, the API lists every attempt under
     `usage.iterations`; each attempt is priced with its own model.
+    `rates_override` ([input, output] $ per million) replaces the built-in
+    prices, for when prices change or the model is not in the list.
     """
     if usage is None:
         return None
+    if rates_override is not None:
+        def n(name: str) -> int:
+            return int(getattr(usage, name, 0) or 0)
+        return priced(
+            n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens"),
+            n("output_tokens"), rates_override,
+        )
     iterations = getattr(usage, "iterations", None)
     if iterations:
         total = 0.0

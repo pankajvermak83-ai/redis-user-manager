@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .hotkeys import Hotkey
@@ -22,6 +22,7 @@ class WindowInfo:
     title: str = ""
     exe: str = ""  # program file name in lower case, e.g. "excel.exe"
     pid: int = 0
+    hwnd: int = field(default=0, compare=False)  # Windows' number for the window
 
     def app_name(self) -> str:
         name = self.exe[:-4] if self.exe.endswith(".exe") else self.exe
@@ -84,6 +85,19 @@ class Platform:
 
     def reveal_file(self, path: str) -> bool:
         """Show a file, selected, in the file manager."""
+        return False
+
+    # --- one-key mode
+
+    def copy_selection(self, window: WindowInfo | None) -> bool:
+        """Copy what is selected in `window` (as if you pressed Ctrl+C).
+        Called on the hotkey thread, before Sidekick's window appears.
+        True if something was copied."""
+        return False
+
+    def paste_into(self, window: WindowInfo | None) -> bool:
+        """Bring `window` back to the front and paste the clipboard into it.
+        True if the paste keys were sent."""
         return False
 
 

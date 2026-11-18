@@ -5,14 +5,17 @@ imitations ("fakes"). They check Sidekick's own logic: starting and stopping
 the hotkey listener, what happens when the hotkey is taken, and so on. They
 cannot prove that real Windows behaves as the fakes do."""
 
+import ctypes
 import queue
 import threading
+import time
 
 from sidekick.hotkeys import parse_hotkey
 from sidekick.platform_base import WindowInfo
 from sidekick.platform_win import (
-    ERROR_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED, HOTKEY_ID, MOD_ALT, MOD_CONTROL,
-    MOD_NOREPEAT, MOD_SHIFT, WM_HOTKEY, WM_QUIT, Win32Api, WindowsPlatform, modifier_flags,
+    ERROR_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED, HOTKEY_ID, INPUT, KEYEVENTF_EXTENDEDKEY,
+    KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, SIDEKICK_TAG, VK_C, VK_CONTROL,
+    VK_INSERT, VK_SHIFT, VK_V, WM_HOTKEY, WM_QUIT, Win32Api, WindowsPlatform, modifier_flags,
     virtual_key,
 )
 
@@ -40,6 +43,14 @@ class FakeWindows:
         self.closed_handles = []
         self.mutex_exists = False
         self.dpi_calls = []
+        # keyboard and windows, for one-key mode
+        self.held = set()  # keys you are still holding down
+        self.sent = []  # each SendInput call: [(key, flags), ...]
+        self.copies_with = {"insert", "c"}  # copy keys the app in front understands
+        self.has_selection = True
+        self.windows = {4242}  # windows that exist
+        self.comes_to_front = True
+        self.pasted_into = []
 
         u, k, s = type("U", (), {})(), type("K", (), {})(), type("S", (), {})()
         u.RegisterHotKey = Fn(self._register)
@@ -54,6 +65,11 @@ class FakeWindows:
         u.GetClipboardSequenceNumber = Fn(lambda: self.clipboard_seq)
         u.RegisterClipboardFormatW = Fn(lambda name: 50000 + sum(map(ord, name)) % 1000)
         u.IsClipboardFormatAvailable = Fn(lambda fmt: 1 if fmt in self.clipboard_formats else 0)
+        u.SendInput = Fn(self._send_input)
+        u.GetAsyncKeyState = Fn(lambda vk: 0x8000 if vk in self.held else 0)
+        u.MapVirtualKeyW = Fn(lambda vk, kind: 0x100 + vk)
+        u.SetForegroundWindow = Fn(self._set_foreground)
+        u.IsWindow = Fn(lambda hwnd: 1 if hwnd in self.windows else 0)
         k.GetCurrentThreadId = Fn(lambda: threading.get_ident() % 100000)
         k.OpenProcess = Fn(lambda access, inherit, pid: 99)
         k.QueryFullProcessImageNameW = Fn(self._image_name)
@@ -98,6 +114,28 @@ class FakeWindows:
 
     def press_hotkey(self):
         self.messages.put((WM_HOTKEY, HOTKEY_ID))
+
+    def _send_input(self, count, events, size):
+        assert size == ctypes.sizeof(INPUT)
+        keys = []
+        for i in range(count):
+            ki = events[i].u.ki
+            assert events[i].type == 1 and ki.dwExtraInfo == SIDEKICK_TAG and ki.wScan == 0x100 + ki.wVk
+            keys.append((ki.wVk, ki.dwFlags))
+        self.sent.append(keys)
+        downs = [vk for vk, flags in keys if not flags & KEYEVENTF_KEYUP]
+        if (downs == [VK_CONTROL, VK_INSERT] and "insert" in self.copies_with) or (
+                downs == [VK_CONTROL, VK_C] and "c" in self.copies_with):
+            if self.has_selection:
+                self.clipboard_seq += 1  # the app copied the selection
+        if downs in ([VK_CONTROL, VK_V], [VK_SHIFT, VK_INSERT]):
+            self.pasted_into.append(self.foreground[0])
+        return count
+
+    def _set_foreground(self, hwnd):
+        if self.comes_to_front and hwnd in self.windows:
+            self.foreground = (hwnd,) + tuple(self.foreground[1:])
+        return 1
 
 
 def test_key_numbers():
@@ -293,3 +331,104 @@ def test_no_chrome_installed():
                                isfile=lambda p: False, environ={})
     assert not platform.open_in_chrome("https://claude.ai/new")
     assert launched == []
+
+
+
+# ----------------------------------------------------------------- one-key mode
+
+CTRL_INSERT = [(VK_CONTROL, 0), (VK_INSERT, KEYEVENTF_EXTENDEDKEY),
+               (VK_INSERT, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP), (VK_CONTROL, KEYEVENTF_KEYUP)]
+CTRL_C = [(VK_CONTROL, 0), (VK_C, 0), (VK_C, KEYEVENTF_KEYUP), (VK_CONTROL, KEYEVENTF_KEYUP)]
+CTRL_V = [(VK_CONTROL, 0), (VK_V, 0), (VK_V, KEYEVENTF_KEYUP), (VK_CONTROL, KEYEVENTF_KEYUP)]
+SHIFT_INSERT = [(VK_SHIFT, 0), (VK_INSERT, KEYEVENTF_EXTENDEDKEY),
+                (VK_INSERT, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP), (VK_SHIFT, KEYEVENTF_KEYUP)]
+WORD = WindowInfo("Letter.docx - Word", "winword.exe", 77, hwnd=4242)
+TERMINAL = WindowInfo("Windows PowerShell", "windowsterminal.exe", 78, hwnd=4242)
+
+
+def quick_platform(fake):
+    platform = WindowsPlatform(fake.api)
+    platform.release_timeout = platform.copy_timeout = 0.15
+    return platform
+
+
+def test_foreground_window_includes_its_handle():
+    info = WindowsPlatform(FakeWindows().api).foreground_window()
+    assert info.hwnd == 4242
+
+
+def test_copy_uses_ctrl_insert_first():
+    fake = FakeWindows()
+    assert quick_platform(fake).copy_selection(WORD)
+    assert fake.sent == [CTRL_INSERT]
+
+
+def test_copy_falls_back_to_ctrl_c():
+    fake = FakeWindows()
+    fake.copies_with = {"c"}  # an app that ignores Ctrl+Insert
+    assert quick_platform(fake).copy_selection(WORD)
+    assert fake.sent == [CTRL_INSERT, CTRL_C]
+
+
+def test_terminals_never_get_ctrl_c():
+    fake = FakeWindows()
+    fake.copies_with = {"c"}
+    assert not quick_platform(fake).copy_selection(TERMINAL)
+    assert fake.sent == [CTRL_INSERT]  # Ctrl+C could stop a running program
+
+
+def test_nothing_selected():
+    fake = FakeWindows()
+    fake.has_selection = False
+    assert not quick_platform(fake).copy_selection(WORD)
+    assert fake.sent == [CTRL_INSERT, CTRL_C]
+
+
+def test_waits_until_the_hotkey_is_released():
+    fake = FakeWindows()
+    platform = quick_platform(fake)
+    fake.held = {VK_SHIFT}
+    assert not platform.copy_selection(WORD)  # still held after the wait: nothing is pressed
+    assert fake.sent == []
+
+    platform.release_timeout = 2.0
+    threading.Timer(0.1, fake.held.clear).start()
+    started = time.monotonic()
+    assert platform.copy_selection(WORD)
+    assert time.monotonic() - started >= 0.09
+    assert fake.sent == [CTRL_INSERT]
+
+
+def test_the_hotkeys_own_key_must_be_released_too():
+    fake = FakeWindows()
+    platform = quick_platform(fake)
+    platform.start_hotkey(parse_hotkey("ctrl+shift+space"), lambda info: None)
+    fake.held = {0x20}  # still holding Space
+    assert not platform.copy_selection(WORD)
+    platform.stop_hotkey()
+
+
+def test_paste_back_into_the_original_window():
+    fake = FakeWindows()
+    fake.foreground = (999, "Sidekick", 1, r"C:\python\pythonw.exe")
+    assert quick_platform(fake).paste_into(WORD)
+    assert fake.pasted_into == [4242]
+    assert fake.sent == [CTRL_V]
+
+
+def test_paste_back_in_a_terminal_uses_shift_insert():
+    fake = FakeWindows()
+    assert quick_platform(fake).paste_into(TERMINAL)
+    assert fake.sent == [SHIFT_INSERT]
+
+
+def test_paste_back_is_skipped_when_unsafe():
+    fake = FakeWindows()
+    platform = quick_platform(fake)
+    fake.foreground = (999, "Sidekick", 1, r"C:\python\pythonw.exe")
+    gone = WindowInfo("Closed", "notepad.exe", 5, hwnd=5555)
+    assert not platform.paste_into(gone)  # the window was closed
+    assert not platform.paste_into(WindowInfo("No handle", "notepad.exe", 5))
+    fake.comes_to_front = False
+    assert not platform.paste_into(WORD)  # it did not come to the front
+    assert fake.sent == [] and fake.pasted_into == []

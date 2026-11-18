@@ -4,7 +4,7 @@ Settings live in one small JSON file:
     Windows:  %APPDATA%\\Sidekick\\config.json
     Others:   ~/.config/Sidekick/config.json   (only used for development)
 
-The API key is NOT stored here. See keystore.py.
+API keys are NOT stored here. See keystore.py.
 """
 
 from __future__ import annotations
@@ -50,6 +50,49 @@ DEFAULT_EFFORT = "medium"
 SEND_TO_CHOICES = ("claude_app", "chrome", "api")
 DEFAULT_SEND_TO = "claude_app"
 
+# Which AI answers when the answer is shown inside Sidekick ("api" above).
+#   claude: Anthropic's Claude API (an API key, pay per use)
+#   gemini: Google's Gemini API (an API key; has a limited free tier)
+#   ollama: a model running on this PC with Ollama (free, private, offline)
+#   custom: any other service with an "OpenAI-compatible" chat API (OpenAI,
+#           DeepSeek, Groq, Mistral, OpenRouter, LM Studio, ...). You type in
+#           its address, key and model, so new services need no code change.
+#   claude_code: Claude Code, Anthropic's own command-line tool, signed in
+#           with your Claude plan: no API key and no separate bill.
+PROVIDERS = ("claude_code", "claude", "gemini", "ollama", "custom")
+DEFAULT_PROVIDER = "claude_code"
+PROVIDER_NAMES = {
+    "claude_code": "Claude Code", "claude": "Claude API", "gemini": "Google Gemini",
+    "ollama": "Ollama", "custom": "Other service",
+}
+CLAUDE_CODE_MODELS = ("", "haiku", "sonnet", "opus")  # "" = Claude Code's own choice
+CLAUDE_MODEL_IDS = tuple(MODELS)
+
+# Gemini and Ollama are reached through their "OpenAI-compatible" chat API.
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+GEMINI_MODELS = ("gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.1-flash-lite")
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"  # the free tier allows the most questions a day with it
+OLLAMA_URL = "http://localhost:11434/v1"
+OLLAMA_MODELS = ("gemma4:e4b", "gemma4:e2b", "qwen3.5")
+DEFAULT_OLLAMA_MODEL = "gemma4:e4b"
+
+# What the hotkey asks when you have selected something ("instant" mode).
+SMART_PROMPT = (
+    "Help me with this. If it is a question, answer it. If it is an error message, explain what it "
+    "means and how to fix it. If it is not in English, translate it into English. Otherwise, explain "
+    "it simply and point out anything I should do."
+)
+HOTKEY_ACTIONS: dict[str, tuple[str, str]] = {  # key: (label in Settings, what is asked)
+    "smart": ("Help with this (Sidekick decides)", SMART_PROMPT),
+    "explain": ("Explain", "Explain this in simple words."),
+    "fix": ("Fix", "Find what is wrong here and give me the corrected version."),
+    "summarize": ("Summarize", "Summarize this in a few short points."),
+    "improve": ("Improve writing", "Rewrite this so it is clear, correct and polite. Keep my meaning."),
+    "reply": ("Draft reply", "Write a short, polite reply to this."),
+    "open": ("Nothing: only open the window", ""),
+}
+DEFAULT_HOTKEY_ACTION = "smart"
+
 # --------------------------------------------------------------------------
 # Defaults
 # --------------------------------------------------------------------------
@@ -84,6 +127,24 @@ DEFAULT_QUICK_ACTIONS = [
 @dataclass
 class Settings:
     send_to: str = DEFAULT_SEND_TO
+    # One key press: copy the selected text and ask right away.
+    instant: bool = True
+    hotkey_action: str = DEFAULT_HOTKEY_ACTION
+    # For answers inside Sidekick:
+    provider: str = DEFAULT_PROVIDER
+    gemini_model: str = DEFAULT_GEMINI_MODEL
+    gemini_base_url: str = GEMINI_BASE_URL
+    ollama_model: str = DEFAULT_OLLAMA_MODEL
+    ollama_url: str = OLLAMA_URL
+    claude_code_model: str = ""  # "", "haiku", "sonnet", "opus" or a full model name
+    claude_code_command: str = ""  # full path to claude.exe, if it is not found by itself
+    custom_name: str = ""  # e.g. "Groq": only used in messages
+    custom_url: str = ""  # e.g. https://api.groq.com/openai/v1
+    custom_model: str = ""
+    # Your own prices, in US dollars per million tokens: {"claude": [input, output], ...}.
+    # Used for cost estimates and the daily limit. Without one, Claude uses
+    # Sidekick's built-in price list and the other services count as free.
+    prices: dict = field(default_factory=dict)
     model: str = DEFAULT_MODEL
     effort: str = DEFAULT_EFFORT
     hotkey: str = DEFAULT_HOTKEY
@@ -119,10 +180,37 @@ class Settings:
         send_to = data.get("send_to")
         if isinstance(send_to, str) and send_to in SEND_TO_CHOICES:
             s.send_to = send_to
+        if isinstance(data.get("instant"), bool):
+            s.instant = data["instant"]
+        action = data.get("hotkey_action")
+        if isinstance(action, str) and action in HOTKEY_ACTIONS:
+            s.hotkey_action = action
+        provider = data.get("provider")
+        if isinstance(provider, str) and provider in PROVIDERS:
+            s.provider = provider
+        code_model = data.get("claude_code_model")
+        if isinstance(code_model, str) and len(code_model) < 100:
+            s.claude_code_model = code_model.strip()
+        command = data.get("claude_code_command")
+        if isinstance(command, str) and len(command) < 400:
+            s.claude_code_command = command.strip()
+        for name in ("gemini_model", "ollama_model", "custom_model", "custom_name"):
+            value = data.get(name)
+            if isinstance(value, str) and value.strip() and len(value) < 200:
+                setattr(s, name, value.strip())
+        for name in ("gemini_base_url", "ollama_url", "custom_url"):
+            value = data.get(name)
+            if isinstance(value, str) and value.strip().startswith(("http://", "https://")):
+                setattr(s, name, value.strip().rstrip("/"))
+        prices = data.get("prices")
+        if isinstance(prices, dict):
+            for key, pair in prices.items():
+                if key in PROVIDERS and valid_price_pair(pair):
+                    s.prices[key] = [float(pair[0]), float(pair[1])]
 
         model = data.get("model")
-        if isinstance(model, str) and model in MODELS:
-            s.model = model
+        if isinstance(model, str) and model.strip().startswith("claude-") and len(model) < 100:
+            s.model = model.strip()  # new Claude models can be typed in
 
         effort = data.get("effort")
         if isinstance(effort, str) and effort in EFFORTS:
@@ -161,6 +249,14 @@ class Settings:
             if cleaned:
                 s.quick_actions = cleaned[:8]
         return s
+
+
+def valid_price_pair(pair: object) -> bool:
+    """[input price, output price], each a number from 0 to 1000 ($ per million tokens)."""
+    return (
+        isinstance(pair, (list, tuple)) and len(pair) == 2
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1000 for v in pair)
+    )
 
 
 def _as_int(value: object, default: int, low: int, high: int) -> int:

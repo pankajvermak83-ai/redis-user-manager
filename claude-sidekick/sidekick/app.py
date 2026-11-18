@@ -12,15 +12,17 @@ from pathlib import Path
 from tkinter import ttk
 from tkinter import font as tkfont
 
-from . import keystore
-from .capture import ClipboardWatch, capture_context
-from .claude_client import ClaudeClient
-from .config import DEFAULT_HOTKEY, FALLBACK_HOTKEY, Settings, config_dir, config_path, load_settings
+from . import keystore, services
+from .capture import Capture, ClipboardWatch, capture_context
+from .config import (
+    DEFAULT_HOTKEY, FALLBACK_HOTKEY, HOTKEY_ACTIONS, Settings, config_dir, config_path, load_settings,
+)
 from .costs import DailySpend, format_money
 from .handoff import TARGET_NAMES, plan_handoff
 from .hotkeys import Hotkey, parse_hotkey
 from .platform_base import Platform, WindowInfo, get_platform
 from .popup import Dialogs, Popup
+from .privacy import is_private_window
 from .settings_ui import SettingsDialog
 
 log = logging.getLogger(__name__)
@@ -44,7 +46,8 @@ class SidekickApp:
         self.spend = spend
         self.settings_path = settings_path or config_path()
         self.dialogs = dialogs or Dialogs()
-        self._client_factory = client_factory or (lambda s, key: ClaudeClient(s, api_key=key))
+        # Makes the client for the chosen AI service (the tests swap in fakes).
+        self._client_factory = client_factory or services.make_client
         self._client = None
 
         self.watch = ClipboardWatch(platform)
@@ -99,24 +102,30 @@ class SidekickApp:
 
     def refresh_main(self) -> None:
         """Bring the main window's text up to date."""
-        if self.active_hotkey:
-            step2 = f"2. Press {self.active_hotkey.pretty()}. This works in any app."
-        else:
-            step2 = "2. Click the Ask now button below."
-        if self.settings.send_to == "api":
-            steps34 = "3. Type your question and click Ask.\n"
-        else:
-            steps34 = (
-                "3. Type your question and click Open in Claude.\n"
-                "4. Claude opens with your question. Press Enter there.\n"
+        s = self.settings
+        key = self.active_hotkey.pretty() if self.active_hotkey else ""
+        press = f"Press {key}" if key else "Click the Ask now button below"
+        inside = s.send_to == "api"
+        one_key = s.instant and s.hotkey_action != "open"
+        if one_key:
+            action = HOTKEY_ACTIONS[s.hotkey_action][0].split(" (")[0]
+            result = ("The answer appears in a small window. Copy it, or click Paste back."
+                      if inside else "Claude opens with the question filled in. Press Enter there.")
+            steps = (
+                "1. Select text in any app (or snip the screen with Win+Shift+S).\n"
+                f"2. {press}. Sidekick copies it and asks \"{action}\" right away.\n"
+                f"3. {result}\n\n"
+                f"With nothing selected, {(key or 'the hotkey')} opens the window so you can type a question."
             )
-        self.howto_label.configure(text=(
-            "1. Copy text (Ctrl+C), or snip part of the screen (Win+Shift+S).\n"
-            f"{step2}\n"
-            f"{steps34}\n"
-            "Nothing is sent to Claude until you say so.\n"
-            "You can minimize this window. Sidekick keeps running."
-        ))
+        else:
+            steps = (
+                "1. Copy text (Ctrl+C), or snip part of the screen (Win+Shift+S).\n"
+                f"2. {press}.{' This works in any app.' if key else ''}\n"
+                f"3. Type your question and click {self.ask_label()}.\n"
+                + ("" if inside else "4. Claude opens with your question. Press Enter there.\n")
+                + "\nNothing is sent until you say so."
+            )
+        self.howto_label.configure(text=steps + "\nYou can minimize this window. Sidekick keeps running.")
         if self.active_hotkey:
             text = f"Hotkey: {self.active_hotkey.pretty()}"
             if self.hotkey_note:
@@ -131,12 +140,15 @@ class SidekickApp:
             self.spend_label.configure(text="")
             return
 
-        if keystore.load_api_key():
-            key_text = "Answers appear here in Sidekick. API key: saved"
-        elif keystore.env_has_credentials():
-            key_text = "Answers appear here in Sidekick. API key: taken from ANTHROPIC_API_KEY"
-        else:
-            key_text = "Answers appear here in Sidekick. API key: not set yet. Click Settings to add it."
+        key_text = f"Answers appear here in Sidekick, from {services.describe(self.settings)}."
+        provider = self.settings.provider
+        if provider in ("claude", "gemini"):
+            if services.load_key(provider):
+                key_text += " API key: saved"
+            elif provider == "claude" and keystore.env_has_credentials():
+                key_text += " API key: taken from ANTHROPIC_API_KEY"
+            else:
+                key_text += " API key: not set yet. Click Settings to add it."
         self.key_label.configure(text=key_text)
 
         spent, limit = self.spend.today_total(), self.settings.daily_limit_usd
@@ -160,14 +172,14 @@ class SidekickApp:
         except ValueError:
             wanted = parse_hotkey(DEFAULT_HOTKEY)
 
-        ok, problem = self.platform.start_hotkey(wanted, self.hotkey_events.put)
+        ok, problem = self.platform.start_hotkey(wanted, self._on_hotkey)
         if ok:
             self.active_hotkey = wanted
             return
         log.warning("Hotkey %s unavailable: %s", wanted, problem)
         backup = parse_hotkey(FALLBACK_HOTKEY)
         if backup != wanted:
-            ok, _ = self.platform.start_hotkey(backup, self.hotkey_events.put)
+            ok, _ = self.platform.start_hotkey(backup, self._on_hotkey)
             if ok:
                 self.active_hotkey = backup
                 self.hotkey_note = (
@@ -186,18 +198,32 @@ class SidekickApp:
         finally:
             self._tick_job = self.root.after(150, self._tick)
 
+    def _on_hotkey(self, window: WindowInfo | None) -> None:
+        """Runs on the hotkey thread the moment the hotkey is pressed, while
+        your app is still in front: in one-key mode, copy its selection.
+        Nothing here touches Sidekick's windows."""
+        s = self.settings
+        copied = False
+        if (s.instant and window is not None and window.pid != os.getpid()
+                and not is_private_window(window, s.private_words)):
+            try:
+                copied = self.platform.copy_selection(window)
+            except Exception:
+                log.exception("Copying the selection failed")
+        self.hotkey_events.put((window, copied))
+
     def process_events(self) -> None:
         """Runs a few times a second: notice clipboard changes and hotkey presses."""
         self.watch.poll()
-        pressed, window = False, None
+        pressed, window, copied = False, None, False
         try:
             while True:
-                window = self.hotkey_events.get_nowait()
+                window, copied = self.hotkey_events.get_nowait()
                 pressed = True
         except queue.Empty:
             pass
         if pressed:
-            self.open_popup(window)
+            self.open_popup(window, copied)
 
     # ------------------------------------------------------------- popup
 
@@ -211,28 +237,62 @@ class SidekickApp:
                 continue
         return ""
 
-    def open_popup(self, window: WindowInfo | None) -> None:
+    def open_popup(self, window: WindowInfo | None, copied: bool = False) -> None:
+        """Show the Ask window for a hotkey press (or the Ask now button).
+        `copied` means Sidekick just copied your selection (one-key mode)."""
+        s = self.settings
         if window is not None and window.pid == os.getpid():
             # The hotkey was pressed while Sidekick itself was in front.
             if self.popup.visible:
                 self.popup.focus()
                 return
             window = None
-        capture = capture_context(
-            window, self.watch, self.platform, self.read_clipboard_text,
-            self.platform.grab_clipboard_media, self.settings,
-        )
+        capture = None
+        if copied:
+            text = self.read_clipboard_text()
+            if text.strip():
+                limit = s.max_text_chars
+                note = "Sidekick copied your selection."
+                if len(text) > limit:
+                    note = f"Sidekick copied your selection and kept the first {limit:,} characters."
+                capture = Capture(window=window, text=text[:limit], note=note)
+            # (no text: maybe a file selected in File Explorer, which the
+            # usual clipboard rules below pick up)
+        if capture is None:
+            capture = capture_context(
+                window, self.watch, self.platform, self.read_clipboard_text,
+                self.platform.grab_clipboard_media, s,
+            )
+        if copied:
+            self.watch.note_own_copy(capture.text)  # don't reuse it on the next press
         self.popup.open(capture)
+
+        snip = capture.attachment is not None and capture.attachment.kind == "image" and not capture.attachment.path
+        has_content = bool(capture.text.strip() or capture.attachment)
+        if s.instant and s.hotkey_action != "open" and has_content and (copied or snip):
+            self.popup.auto_ask(HOTKEY_ACTIONS[s.hotkey_action][1])
 
     # ------------------------------------------------------------ Claude
 
     def has_key(self) -> bool:
-        return bool(keystore.load_api_key()) or keystore.env_has_credentials()
+        return services.has_key(self.settings)
 
     def client(self):
         if self._client is None:
-            self._client = self._client_factory(self.settings, keystore.load_api_key())
+            self._client = self._client_factory(self.settings)
         return self._client
+
+    def paste_back(self, text: str, window: WindowInfo | None) -> None:
+        """Put the answer into the app you were in (as if you pressed Ctrl+V)."""
+        self.copy_to_clipboard(text)
+        self.popup.hide()
+        self.root.update_idletasks()
+
+        def paste() -> None:
+            if not self.platform.paste_into(window):
+                self.show_toast("The answer is copied. Click where you want it, then press Ctrl+V.")
+
+        self.root.after(60, paste)
 
     def on_key_changed(self) -> None:
         self._client = None
