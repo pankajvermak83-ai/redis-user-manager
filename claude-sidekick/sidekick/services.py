@@ -29,6 +29,17 @@ def has_key(settings) -> bool:
     return True  # Claude Code, Ollama: no key; other services: a key is optional
 
 
+def counts_spending(settings) -> bool:
+    """True if answers from the chosen service cost money that Sidekick adds
+    up: the Claude API, or a service you entered prices for in Settings."""
+    return settings.provider == "claude" or bool(settings.prices.get(settings.provider))
+
+
+def reads_pictures(settings) -> bool:
+    """False when answers come from Claude Code, which reads text only here."""
+    return settings.send_to != "api" or settings.provider != "claude_code"
+
+
 def model_name(settings) -> str:
     p = settings.provider
     return {

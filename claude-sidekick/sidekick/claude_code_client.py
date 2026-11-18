@@ -112,6 +112,21 @@ def build_prompt(conversation: Conversation, new_message: str) -> str:
     return "\n".join(lines)
 
 
+def _stop(process: subprocess.Popen) -> None:
+    """End Claude Code. On Windows, `claude` may be a small claude.cmd file
+    (an npm install) that starts the real program: end that one too."""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True,
+                           timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        process.kill()
+    except OSError:
+        pass  # it has already ended
+
+
 @dataclass
 class _Run:
     cancelled: bool = False
@@ -248,13 +263,14 @@ class ClaudeCodeClient:
                     run.cancelled = True
                     return run
                 if time.monotonic() > deadline:
-                    raise AskError("Claude Code took too long to answer. Try again.")
+                    raise AskError("Claude Code stopped responding. Try again.")
                 try:
                     raw = lines.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if raw is None:
                     break
+                deadline = time.monotonic() + self._timeout  # still answering: wait on
                 try:
                     event = json.loads(raw.decode("utf-8", "replace"))
                 except ValueError:
@@ -275,7 +291,7 @@ class ClaudeCodeClient:
                     run.final = event
         finally:
             if process.poll() is None:
-                process.kill()
+                _stop(process)
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:

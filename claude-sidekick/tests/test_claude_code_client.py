@@ -134,3 +134,18 @@ def test_older_claude_code_without_safe_mode(tmp_path, monkeypatch):
     c.ask(Conversation(), "again", lambda _t: None)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert ["--safe-mode" in call["args"] for call in calls] == [True, False, False]
+
+
+def test_a_long_answer_is_not_cut_off_while_it_keeps_coming(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "slow")  # a piece every 0.4 s
+    monkeypatch.setenv("FAKE_CLAUDE_TEXT", "One|Two|Three")
+    c = ClaudeCodeClient(Settings(), command=[sys.executable, FAKE], workdir=tmp_path / "room", timeout=0.9)
+    assert c.ask(Conversation(), "hi", lambda _t: None).text == "OneTwoThree"  # 1.2 s in all
+
+
+def test_claude_code_that_goes_silent_is_stopped(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "slow")
+    c = ClaudeCodeClient(Settings(), command=[sys.executable, FAKE], workdir=tmp_path / "room", timeout=0.2)
+    with pytest.raises(AskError) as caught:
+        c.ask(Conversation(), "hi", lambda _t: None)
+    assert "stopped responding" in str(caught.value)

@@ -236,6 +236,14 @@ class Harness:
         except (AssertionError, tk.TclError):
             pass
         try:
+            # Hand the keyboard focus back to the main window first: Tk can
+            # crash later, in the next test's windows, if a closed dialog
+            # still owned it when its program ended.
+            self.root.focus_force()
+            self.root.update()
+        except tk.TclError:
+            pass
+        try:
             self.app.quit()  # cancels timers, releases the hotkey, closes windows
         except tk.TclError:
             pass  # already closed by the test
@@ -1057,3 +1065,45 @@ def test_claude_cli_mode_is_the_default(tmp_path, monkeypatch, api):
         assert "from Claude Code on this PC, with your Claude plan" in text
         assert "Claude Code was not found on this PC yet" in text
         assert "Sidekick copies it and asks" in h.label(h.app.howto_label)
+
+
+def test_daily_limit_does_not_block_free_services(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url) as h:
+        h.spend.add(5.0)  # e.g. spent earlier today with the Claude API
+        compat.script.append(chunks(["Free answer."]))
+        press_and_wait(h)
+        assert h.dialogs.titles("info") == []
+        assert h.popup.answer_text().endswith("Free answer.")
+
+
+def test_a_snip_is_not_sent_to_claude_code(tmp_path, monkeypatch, api):
+    log = tmp_path / "claude-calls.jsonl"
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    monkeypatch.setattr("sidekick.claude_code_client.config_dir", lambda: tmp_path / "sidekick")
+    monkeypatch.setattr("sidekick.app.find_claude", lambda configured="": "claude")
+    with started(tmp_path, monkeypatch, api) as h:  # the defaults: Claude Code, one-key mode
+        assert "Win+Shift+S" not in h.label(h.app.howto_label)
+        h.clear_clipboard()
+        h.platform.media = Image.new("RGB", (40, 30), "white")
+        press_and_wait(h, selection=None)
+        assert h.label(h.popup.note_label).startswith("This picture was not sent. Claude Code")
+        assert h.popup.answer_text() == "" and not log.exists()
+
+
+def test_follow_up_after_changing_the_ai_service(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="ollama", ollama_url=compat.base_url) as h:
+        compat.script.append(chunks(["First answer."]))
+        press_and_wait(h)
+        h.app.settings.provider = "claude"  # changed in Settings while the answer is shown
+        h.app.on_settings_changed(hotkey_changed=False)
+        h.set_key()
+        h.ask("And why?")
+        assert "Click New question" in h.label(h.popup.status_label)
+        assert api.requests == [] and len(compat.requests) == 1
+
+
+def test_the_window_names_the_service_that_gets_the_text(tmp_path, monkeypatch, api, compat):
+    with started(tmp_path, monkeypatch, api, send_to="api", provider="gemini",
+                 gemini_base_url=compat.base_url) as h:
+        h.press_hotkey(WORD)
+        assert h.label(h.popup.send_frame) == "What will be sent to Google Gemini (you can edit or delete it)"

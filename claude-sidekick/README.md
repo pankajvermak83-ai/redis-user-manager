@@ -24,9 +24,7 @@ normal Windows ones.*
 
 ```text
  1. Select text in
-    any app (or snip
-    the screen with
-    Win+Shift+S)
+    any app
           |
           v
  2. Press
@@ -192,7 +190,9 @@ documentation, for example `https://api.openai.com/v1`, then fill in
 - **Follow-up questions:** type them in the window and press Enter.
 - **Screen snips:** press Win+Shift+S, drag over an area, then press the
   hotkey. The picture is sent with the question. Claude Code can't read
-  pictures; the other services can, if the model supports it.
+  pictures, so with Claude Code Sidekick keeps the picture and says so;
+  the Claude app and the other services can read them (if the model
+  supports it).
 - **Files:** click **Attach file...** (PDF, picture or text file).
 - **Stop:** click **Stop** at any time. **Esc** closes the window.
 
@@ -233,8 +233,9 @@ documentation, for example `https://api.openai.com/v1`, then fill in
   costs, so the estimates stay right when prices change.
 - **Built-in Claude prices.** Sidekick knows the Claude API prices as of
   November 2026. Without your own prices, Ollama and Gemini count as free.
-- **Daily limit.** Sidekick stops when today's estimated spending reaches
-  your limit ($2 to start with; 0 means no limit).
+- **Daily limit.** Sidekick stops paid questions when today's estimated
+  spending reaches your limit ($2 to start with; 0 means no limit).
+  Claude Code, and services without prices, keep working.
 - **Big requests.** Before sending a long PDF to the Claude API, Sidekick
   shows the cost and asks first.
 
@@ -266,7 +267,9 @@ your questions) are logged to `%APPDATA%\Sidekick\sidekick.log`.
 ## If something goes wrong
 
 - **"Claude Code was not found":** install it for the terminal (see
-  above), then restart Sidekick.
+  above) and sign in. Then ask again: no restart needed.
+- **"You changed the AI service":** click **New question**. Answers from
+  one AI service can't be continued by another.
 - **"Claude Code is not signed in":** open a terminal, run `claude`, and
   sign in.
 - **"Gemini's free limit is used up":** wait (the daily limit resets at
@@ -307,7 +310,7 @@ sidekick/
   attachments.py       pictures, PDFs and text files
   costs.py             cost estimates, your prices, the daily total
   platform_win.py      Windows: hotkey, copy and paste keys, opening apps
-tests/                 180 tests
+tests/                 186 tests
 ```
 
 Run the tests from the `tests` folder:

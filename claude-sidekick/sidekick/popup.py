@@ -85,6 +85,7 @@ class Popup:
         self._pending: tuple = ("", None)  # (question, content) waiting on a size check
         self._attachment_seq = None  # clipboard counter when a picture was picked up
         self._client = None  # the Claude client used by the current request
+        self._asked_with = None  # (send_to, provider) of the current conversation
         self._pump_job = None
 
         self.win = tk.Toplevel(app.root)
@@ -116,7 +117,7 @@ class Popup:
         self.note_label.grid(row=1, column=0, sticky="we", pady=(2, 6))
 
         # --- what will be sent
-        self.send_frame = ttk.LabelFrame(outer, text="What will be sent to Claude (you can edit or delete it)", padding=6)
+        self.send_frame = ttk.LabelFrame(outer, text="", padding=6)
         self.send_frame.grid(row=2, column=0, sticky="we")
         self.send_frame.columnconfigure(0, weight=1)
         self.ctx_text = tk.Text(self.send_frame, height=6, width=66, wrap="word", undo=True, font=text_font)
@@ -210,6 +211,7 @@ class Popup:
         self.attachment = capture.attachment
         self._attachment_seq = self.app.platform.clipboard_sequence()
         self.last_answer = ""
+        self._asked_with = None
 
         if capture.private:
             where = "Private window (nothing was read)"
@@ -226,7 +228,6 @@ class Popup:
             self.ctx_text.insert("1.0", capture.text)
         self._set_answer("")
         self.question_var.set("")
-        self.send_frame.configure(text="What will be sent to Claude (you can edit or delete it)")
         self._set_status("")
         self.refresh_mode()
         self._update_controls()
@@ -241,12 +242,22 @@ class Popup:
         """Name the main button after where the question goes. When Claude
         answers in its own app, the answer box and its buttons are hidden."""
         self.ask_button.configure(text=self.app.ask_label())
+        if not self.conversation.started:
+            self.send_frame.configure(text=f"What will be sent to {self._receiver()} (you can edit or delete it)")
         answers_here = self.app.settings.send_to == "api"
         for widget in (self.answer_frame, self.copy_button, self.paste_back_button, self.stop_button):
             if answers_here:
                 widget.grid()
             else:
                 widget.grid_remove()
+
+    def _receiver(self) -> str:
+        """Who gets the question: Claude (app or website) or the AI service."""
+        s = self.app.settings
+        return services.service_name(s) if s.send_to == "api" else "Claude"
+
+    def set_note(self, text: str) -> None:
+        self.note_label.configure(text=text)
 
     def focus(self) -> None:
         self.win.lift()
@@ -361,6 +372,12 @@ class Popup:
         if not question:
             self._set_status("Type a question, or click one of the buttons.")
             return
+        mode = (app.settings.send_to, app.settings.provider)
+        if not first and mode != self._asked_with:
+            # The answers so far came from another AI service (or Claude app
+            # mode is now on): its history can't be sent to the new one.
+            self._set_status("You changed the AI service in Settings. Click New question to ask it.")
+            return
         if quick and first and not text and self.attachment is None:
             self._set_status("Copy something first (Ctrl+C) and click Paste clipboard, or type your own question.")
             return
@@ -375,7 +392,7 @@ class Popup:
                 return
             limit = app.settings.daily_limit_usd
             spent = app.spend.today_total()
-            if limit > 0 and spent >= limit:
+            if limit > 0 and spent >= limit and services.counts_spending(app.settings):
                 app.dialogs.info(
                     self.win, "Daily limit reached",
                     f"Today's estimated spending ({format_money(spent)}) has reached your daily limit "
@@ -396,7 +413,7 @@ class Popup:
                 self.win, "This may contain a secret",
                 "The text you are about to send looks like it contains "
                 + " and ".join(secrets)
-                + ".\n\nSend it to Claude anyway?",
+                + f".\n\nSend it to {self._receiver()} anyway?",
             ):
                 return
             window = self.capture.window if (app.settings.send_window_title and not self.capture.private) else None
@@ -415,6 +432,7 @@ class Popup:
         self._append_answer(f"{lead}You asked: {question}\n\n")
 
         self._busy = True
+        self._asked_with = mode
         self._got_text = False
         self._request_id += 1
         self._stop = threading.Event()

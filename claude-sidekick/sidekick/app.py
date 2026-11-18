@@ -22,7 +22,7 @@ from .handoff import TARGET_NAMES, plan_handoff
 from .hotkeys import Hotkey, parse_hotkey
 from .platform_base import Platform, WindowInfo, get_platform
 from .popup import Dialogs, Popup
-from .claude_code_client import find_claude
+from .claude_code_client import NO_PICTURES, find_claude
 from .privacy import is_private_window
 from .settings_ui import SettingsDialog
 
@@ -108,19 +108,20 @@ class SidekickApp:
         press = f"Press {key}" if key else "Click the Ask now button below"
         inside = s.send_to == "api"
         one_key = s.instant and s.hotkey_action != "open"
+        snip = " (or snip the screen with Win+Shift+S)" if services.reads_pictures(s) else ""
         if one_key:
             action = HOTKEY_ACTIONS[s.hotkey_action][0].split(" (")[0]
             result = ("The answer appears in a small window. Copy it, or click Paste back."
                       if inside else "Claude opens with the question filled in. Press Enter there.")
             steps = (
-                "1. Select text in any app (or snip the screen with Win+Shift+S).\n"
+                f"1. Select text in any app{snip}.\n"
                 f"2. {press}. Sidekick copies it and asks \"{action}\" right away.\n"
                 f"3. {result}\n\n"
                 f"With nothing selected, {(key or 'the hotkey')} opens the window so you can type a question."
             )
         else:
             steps = (
-                "1. Copy text (Ctrl+C), or snip part of the screen (Win+Shift+S).\n"
+                f"1. Copy text (Ctrl+C){snip}.\n"
                 f"2. {press}.{' This works in any app.' if key else ''}\n"
                 f"3. Type your question and click {self.ask_label()}.\n"
                 + ("" if inside else "4. Claude opens with your question. Press Enter there.\n")
@@ -145,7 +146,7 @@ class SidekickApp:
         provider = self.settings.provider
         if provider == "claude_code" and not find_claude(self.settings.claude_code_command):
             key_text += ("\nClaude Code was not found on this PC yet: install it for the terminal "
-                         "(see Settings > AI service), then restart Sidekick.")
+                         "and sign in (see Settings > AI service). Sidekick finds it by itself after that.")
         if provider in ("claude", "gemini"):
             if services.load_key(provider):
                 key_text += " API key: saved"
@@ -155,7 +156,7 @@ class SidekickApp:
                 key_text += " API key: not set yet. Click Settings to add it."
         self.key_label.configure(text=key_text)
 
-        if provider != "claude" and not self.settings.prices.get(provider):
+        if not services.counts_spending(self.settings):
             self.spend_label.configure(text="")  # no prices for this service: nothing to count
             return
         spent, limit = self.spend.today_total(), self.settings.daily_limit_usd
@@ -277,7 +278,10 @@ class SidekickApp:
         snip = capture.attachment is not None and capture.attachment.kind == "image" and not capture.attachment.path
         has_content = bool(capture.text.strip() or capture.attachment)
         if s.instant and s.hotkey_action != "open" and has_content and (copied or snip):
-            self.popup.auto_ask(HOTKEY_ACTIONS[s.hotkey_action][1])
+            if snip and not services.reads_pictures(s):
+                self.popup.set_note("This picture was not sent. " + NO_PICTURES)
+            else:
+                self.popup.auto_ask(HOTKEY_ACTIONS[s.hotkey_action][1])
 
     # ------------------------------------------------------------ Claude
 
