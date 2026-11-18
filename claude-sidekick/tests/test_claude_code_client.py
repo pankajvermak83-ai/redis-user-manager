@@ -9,7 +9,9 @@ import pytest
 
 from sidekick.attachments import Attachment
 from sidekick.claude_client import AskError, Conversation
-from sidekick.claude_code_client import NO_PICTURES, NOT_INSTALLED, NOT_SIGNED_IN, ClaudeCodeClient
+from sidekick.claude_code_client import (
+    NO_PICTURES, NOT_INSTALLED, NOT_SIGNED_IN, ClaudeCodeClient, plan_only_environment,
+)
 from sidekick.config import Settings
 from sidekick.prompts import SYSTEM_PROMPT
 
@@ -104,3 +106,18 @@ def test_not_installed(tmp_path, monkeypatch):
     with pytest.raises(AskError) as caught:
         c.ask(Conversation(), "hi", lambda _t: None)
     assert str(caught.value) == NOT_INSTALLED
+
+
+def test_api_keys_are_removed_so_your_plan_is_used(run, monkeypatch):
+    # Anthropic: in -p mode an ANTHROPIC_API_KEY is always used (and billed) when present
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-be-used")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "token")
+    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.com")
+    _, _, (call,) = run()
+    assert call["billing_env"] == {}
+
+
+def test_plan_only_environment_keeps_everything_else():
+    env = plan_only_environment({"PATH": "C:\\bin", "anthropic_api_key": "x", "HOME": "h"})
+    assert env == {"PATH": "C:\\bin", "HOME": "h"}

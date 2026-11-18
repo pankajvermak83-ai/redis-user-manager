@@ -48,9 +48,14 @@ If A:
   If it is not found, ask me, then install it (Anthropic's official installer) and reload PATH:
     irm https://claude.ai/install.ps1 | iex
     $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
-  Then tell me to open a new PowerShell window, type claude, press Enter and sign in with my Claude account, and wait until I say it is done. Then test it:
+  Then tell me to open a new PowerShell window, type claude, press Enter and sign in with my Claude account, then type /status there and check that it shows my Claude plan (not an API key). Wait until I say it is done.
+  Check that no API key is set on this PC (one would make Claude Code bill per use instead of using my plan):
+    [Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY','User'); [Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY','Machine'); $env:ANTHROPIC_API_KEY
+  If any of these prints a key, tell me (show only the first 8 characters). Sidekick removes it when it runs Claude Code, but my own terminal would still use it; ask me whether to remove it.
+  Then test it:
     'Reply with just the word OK' | claude -p --max-turns 1
   It should print OK. If it says to log in, I am not signed in yet.
+  Also tell me: to never be charged beyond my plan, keep "usage credits" (extra usage) off in Claude's settings.
 
 If B:
   Tell me to get a free API key at https://aistudio.google.com (API keys), and that I will paste it into Sidekick's Settings myself after it starts (AI service tab, "Gemini API key", Save key).

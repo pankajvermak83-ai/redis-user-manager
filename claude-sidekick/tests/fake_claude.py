@@ -15,7 +15,10 @@ prompt = sys.stdin.read()
 log = os.environ.get("FAKE_CLAUDE_LOG")
 if log:
     with open(log, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"args": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd()}) + "\n")
+        names = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+                 "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")
+        billing = {k: v for k, v in os.environ.items() if k.upper() in names}
+        f.write(json.dumps({"args": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(), "billing_env": billing}) + "\n")
 
 
 def say(obj):

@@ -8,6 +8,9 @@ scripted mode, `claude -p`, like this:
     commands or open files: it only answers;
   * it runs in an empty folder of Sidekick's own and loads no MCP servers;
   * nothing is saved as a session (--no-session-persistence);
+  * API-key settings are removed from its environment: Anthropic's docs say
+    that in this mode an ANTHROPIC_API_KEY, if present, is always used and
+    billed per use, even when you are signed in with your Claude plan;
   * the question goes in through stdin, and the answer streams back as JSON
     lines (--output-format stream-json --include-partial-messages).
 
@@ -44,6 +47,25 @@ NOT_SIGNED_IN = (
     "Claude Code is not signed in. Open a terminal, run claude, and sign in with your Claude account. "
     "Then try again."
 )
+# Settings that would make Claude Code bill an API account or a cloud
+# provider instead of your Claude plan. Sidekick's "your Claude plan" mode
+# removes them from Claude Code's environment.
+BILLING_OVERRIDES = (
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+)
+
+
+def plan_only_environment(environ: dict | None = None) -> dict:
+    """A copy of the environment without anything that would bill an API
+    account, so Claude Code uses your Claude plan's sign-in."""
+    env = dict(os.environ if environ is None else environ)
+    for name in list(env):
+        if name.upper() in BILLING_OVERRIDES:
+            del env[name]
+    return env
+
+
 NO_PICTURES = (
     "Claude Code (in Sidekick) answers about text only. For pictures or PDFs, choose "
     "\"The Claude app\" or another AI service in Settings."
@@ -139,6 +161,7 @@ class ClaudeCodeClient:
             process = subprocess.Popen(
                 self._arguments(prompt_file), cwd=str(self._workdir), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=flags,
+                env=plan_only_environment(),
             )
         except FileNotFoundError as e:
             raise AskError(NOT_INSTALLED) from e

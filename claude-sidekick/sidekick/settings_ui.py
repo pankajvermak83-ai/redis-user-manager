@@ -186,9 +186,10 @@ class SettingsDialog:
             "(run claude once in a terminal)." if found else
             "Claude Code was not found. (The VS Code extension's copy can't be used.) Install it for the "
             "terminal from code.claude.com, run claude once to sign in, then restart Sidekick."))
-        tip(f, 2, "Needs a paid Claude plan (Pro or higher). Sidekick runs Claude Code with all its tools "
-                  "switched off, so it only answers, and it counts toward your plan's limits. Text only: "
-                  "for pictures, use the Claude app or another service.")
+        tip(f, 2, "Needs a paid Claude plan (Pro or higher). Answers count toward your plan's usage limits "
+                  "(shared with Claude chat and Claude Code); there is no extra bill unless you turned on "
+                  "usage credits in Claude's settings. Sidekick removes any API key when it runs Claude Code, "
+                  "so your plan is used. Tools are off, so it only answers. Text only.")
 
         # Claude API
         f = self.service_frames["claude"]

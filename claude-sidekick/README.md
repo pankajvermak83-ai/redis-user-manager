@@ -54,6 +54,8 @@ question.
 - Cost: included in a paid Claude plan (Pro or higher). No API key.
 - Privacy: your Claude account's privacy settings apply.
 - Good to know: text only. Needs Claude Code installed for the terminal.
+  Answers count toward your plan's usage limits, which Claude chat and
+  Claude Code share (see "Billing with Claude Code" below).
 
 **Claude API**
 - Cost: pay per use. Haiku 5.5 is about 0.04 cents a question; Opus 5.5
@@ -126,8 +128,26 @@ tab, pick a service and follow its steps below. Click **Save**.
    irm https://claude.ai/install.ps1 | iex
    ```
 2. Open a new terminal, type `claude`, press Enter, and sign in with your
-   Claude account in the browser.
+   Claude account in the browser. Then type `/status` and check that it
+   shows your Claude plan, not an API key.
 3. Restart Sidekick.
+
+### Billing with Claude Code
+
+According to Anthropic's help pages (November 2026):
+
+- **Your plan's limits.** `claude -p` (the mode Sidekick uses) draws from
+  your plan's usage limits: a 5-hour limit and weekly limits, shared with
+  Claude chat and with Claude Code in VS Code.
+- **No surprise bill.** When you reach a limit, answers stop until it
+  resets. You are charged extra only if you turned on **usage credits**
+  (extra usage) in Claude's settings, and you can set a monthly cap there.
+- **API keys win.** If an `ANTHROPIC_API_KEY` is set on your PC, Claude
+  Code always uses it in this mode and bills it per use, even when you
+  are signed in. Sidekick removes it (and similar settings) whenever it runs
+  Claude Code, so your plan is used.
+- **Make your limits last.** In Settings, choose the model `haiku` (or
+  `sonnet`) for Claude Code, and keep the bigger model for your coding.
 
 **Google Gemini:**
 1. Get a free API key in Google AI Studio (aistudio.google.com).
@@ -279,7 +299,7 @@ sidekick/
   attachments.py       pictures, PDFs and text files
   costs.py             cost estimates, your prices, the daily total
   platform_win.py      Windows: hotkey, copy and paste keys, opening apps
-tests/                 176 tests
+tests/                 178 tests
 ```
 
 Run the tests from the `tests` folder:
