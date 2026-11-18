@@ -35,9 +35,10 @@ from .prompts import SYSTEM_PROMPT
 log = logging.getLogger(__name__)
 
 NOT_INSTALLED = (
-    "Claude Code was not found on this PC (the \"claude\" command). Install Claude Code from "
-    "Anthropic (see code.claude.com), then open a terminal, run claude once and sign in with your "
-    "Claude account. Or choose another AI service in Settings."
+    "Claude Code was not found on this PC (the \"claude\" command). The VS Code extension has its own "
+    "copy, which Sidekick can't use: install Claude Code for the terminal from code.claude.com (in "
+    "PowerShell: irm https://claude.ai/install.ps1 | iex), run claude once to sign in, then restart "
+    "Sidekick. Or choose another AI service in Settings."
 )
 NOT_SIGNED_IN = (
     "Claude Code is not signed in. Open a terminal, run claude, and sign in with your Claude account. "
@@ -47,6 +48,17 @@ NO_PICTURES = (
     "Claude Code (in Sidekick) answers about text only. For pictures or PDFs, choose "
     "\"The Claude app\" or another AI service in Settings."
 )
+
+
+def find_claude(configured: str = "") -> str | None:
+    """Where the `claude` command is: the path set in Settings, the PATH, or
+    the folder Anthropic's Windows installer uses."""
+    candidates = [configured, shutil.which("claude"),
+                  os.path.join(os.path.expanduser("~"), ".local", "bin", "claude.exe")]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 
 def plain_text(content: object) -> str:
@@ -94,8 +106,7 @@ class ClaudeCodeClient:
     def _base_command(self) -> list[str]:
         if self._command:
             return list(self._command)
-        configured = self._settings.claude_code_command
-        path = configured if configured and os.path.isfile(configured) else shutil.which("claude")
+        path = find_claude(self._settings.claude_code_command)
         if not path:
             raise AskError(NOT_INSTALLED)
         return [path]

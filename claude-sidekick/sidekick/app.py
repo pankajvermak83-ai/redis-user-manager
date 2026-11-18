@@ -151,6 +151,9 @@ class SidekickApp:
                 key_text += " API key: not set yet. Click Settings to add it."
         self.key_label.configure(text=key_text)
 
+        if provider != "claude" and not self.settings.prices.get(provider):
+            self.spend_label.configure(text="")  # no prices for this service: nothing to count
+            return
         spent, limit = self.spend.today_total(), self.settings.daily_limit_usd
         spent_text = f"about {format_money(spent)}" if spent > 0 else "$0.00"
         limit_text = f" of your ${limit:.2f} daily limit" if limit > 0 else ""

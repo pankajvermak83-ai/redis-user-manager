@@ -434,3 +434,10 @@ def test_each_service_has_its_own_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-env")
     keystore.delete_api_key(keystore.GEMINI_ACCOUNT)
     assert services.load_key("gemini") == "AIza-env"
+
+
+def test_settings_saved_by_windows_tools_with_a_bom_mark(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_bytes("\ufeff".encode("utf-8") + json.dumps({"send_to": "api", "provider": "ollama"}).encode("utf-8"))
+    loaded = load_settings(path)
+    assert (loaded.send_to, loaded.provider) == ("api", "ollama")

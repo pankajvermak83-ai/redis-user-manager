@@ -3,7 +3,7 @@
 It records how it was called (to the file named in FAKE_CLAUDE_LOG), reads the
 question from stdin, and prints Claude Code's stream-json lines. FAKE_CLAUDE_MODE
 picks the behaviour: ok (default), old (no token-by-token events), signed_out,
-slow, crash."""
+slow, crash. FAKE_CLAUDE_TEXT sets the answer (pieces split by |)."""
 
 import json
 import os
@@ -30,7 +30,7 @@ if mode == "signed_out":
     say({"type": "result", "subtype": "success", "is_error": True,
          "result": "Invalid API key · Please run /login"})
     sys.exit(1)
-pieces = ["Claude Code", " says hi."]
+pieces = os.environ.get("FAKE_CLAUDE_TEXT", "Claude Code| says hi.").split("|")
 if mode != "old":
     for piece in pieces:
         if mode == "slow":

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import shutil
 import tkinter as tk
 from tkinter import ttk
 
 from . import keystore
+from .claude_code_client import find_claude
 from .config import (
     CLAUDE_CODE_MODELS, CLAUDE_MODEL_IDS, DEFAULT_GEMINI_MODEL, DEFAULT_MODEL, DEFAULT_OLLAMA_MODEL,
     EFFORTS, GEMINI_MODELS, HOTKEY_ACTIONS, OLLAMA_MODELS, OLLAMA_URL, PROVIDERS, SEND_TO_CHOICES,
@@ -180,14 +180,15 @@ class SettingsDialog:
         self.code_model_var = tk.StringVar(value=s.claude_code_model or "default")
         field(f, 0, "Model:", ttk.Combobox(f, textvariable=self.code_model_var, width=40,
                                           values=["default" if m == "" else m for m in CLAUDE_CODE_MODELS]))
-        found = s.claude_code_command or shutil.which("claude")
+        found = find_claude(s.claude_code_command)
         self.code_status = tip(f, 1, (
             f"Claude Code was found ({found}). It must be signed in with your Claude account "
             "(run claude once in a terminal)." if found else
-            "Claude Code was not found on this PC. Install it from code.claude.com, run claude once in a "
-            "terminal and sign in. Text only: for pictures, use the Claude app."))
-        tip(f, 2, "Sidekick runs Claude Code with all its tools switched off, so it only answers. "
-                  "This uses your Claude plan's limits.")
+            "Claude Code was not found. (The VS Code extension's copy can't be used.) Install it for the "
+            "terminal from code.claude.com, run claude once to sign in, then restart Sidekick."))
+        tip(f, 2, "Needs a paid Claude plan (Pro or higher). Sidekick runs Claude Code with all its tools "
+                  "switched off, so it only answers, and it counts toward your plan's limits. Text only: "
+                  "for pictures, use the Claude app or another service.")
 
         # Claude API
         f = self.service_frames["claude"]

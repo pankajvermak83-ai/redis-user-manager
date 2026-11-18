@@ -292,7 +292,8 @@ def config_path() -> Path:
 def load_settings(path: Path | None = None) -> Settings:
     path = path or config_path()
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        # utf-8-sig also reads files that Windows tools saved with a BOM mark
+        with open(path, "r", encoding="utf-8-sig") as f:
             return Settings.from_dict(json.load(f))
     except FileNotFoundError:
         return Settings()

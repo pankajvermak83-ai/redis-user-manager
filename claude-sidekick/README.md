@@ -1,16 +1,20 @@
-# Sidekick: ask Claude from any Windows app
+# Sidekick: one key for AI help in any Windows app
 
-Sidekick is a small helper for Windows. Copy something in **any** app,
-press **Ctrl+Shift+Space**, type a question, and Claude opens with your
-question already filled in. You check it and press Enter.
+Select text in **any** app, press **Ctrl+Shift+Space**, and the answer
+appears in a small window right there. Click **Paste back** to put it into
+your app. No browser tab, no other window to operate.
 
-It uses your normal Claude plan (Free, Pro, Max, ...). **No API key and
-no extra bill** are needed.
+You choose which AI answers, and you can switch at any time (for example
+if prices change):
 
-It works the same in Excel, Word, Outlook, your browser, PDFs, error
-messages, chat apps: anything you can copy text from or take a snip of.
+- **Claude Code**, with your Claude plan: no API key, no extra bill
+- **Google Gemini**: has a small free tier
+- **Ollama**: a free AI running on your own PC (private, works offline)
+- **the Claude API**: pay per use
+- **any other OpenAI-compatible service** (OpenAI, DeepSeek, Groq, Mistral,
+  OpenRouter, LM Studio, ...)
 
-![Sidekick's main window, Ask window and hint](docs/sidekick-preview.png)
+![Sidekick's main window and an answer](docs/sidekick-preview.png)
 
 *Pictures from a test run. On Windows the buttons and borders look like
 normal Windows ones.*
@@ -18,40 +22,73 @@ normal Windows ones.*
 ## How it works
 
 ```text
- 1. Copy something
-    (Ctrl+C), or snip
-    the screen
-    (Win+Shift+S)
+ 1. Select text in
+    any app (or snip
+    the screen with
+    Win+Shift+S)
           |
           v
  2. Press
     Ctrl+Shift+Space
           |
           v
- 3. Sidekick shows what
-    it picked up. Type
-    a question or click
-    a button.
+ 3. Sidekick copies
+    your selection and
+    asks "Help with
+    this" right away
           |
           v
- 4. Click "Open in
-    Claude". Claude
-    opens with your
-    question filled in.
-          |
-          v
- 5. Check it and press
-    Enter in Claude.
-    Only now is it sent.
+ 4. The answer appears
+    in a small window.
+    Copy it, click
+    Paste back, or ask
+    a follow-up.
 ```
+
+With nothing selected, the hotkey just opens the window, so you can type a
+question.
+
+## Which AI should I use?
+
+**Claude Code** (the default)
+- Cost: included in a paid Claude plan (Pro or higher). No API key.
+- Privacy: your Claude account's privacy settings apply.
+- Good to know: text only. Needs Claude Code installed for the terminal.
+
+**Claude API**
+- Cost: pay per use. Haiku 5.5 is about 0.04 cents a question; Opus 5.5
+  about 2 cents.
+- Privacy: not used for training by default.
+- Good to know: the best answers. Pictures and PDFs work.
+
+**Google Gemini**
+- Cost: free tier, about 500 questions a day with gemini-3.5-flash-lite
+  and about 20 with gemini-3.8-flash (late 2026).
+- Privacy: **on the free tier Google may use what you send to improve its
+  products, and people may read it.** Don't send private or
+  work-confidential text.
+
+**Ollama**
+- Cost: free.
+- Privacy: everything stays on your PC.
+- Good to know: needs a fairly strong PC (8 to 16 GB of memory). Answers
+  are simpler than the big online AIs.
+
+**Other service**
+- Cost and privacy: that service's own.
+- Good to know: type in its address, key and model.
+
+Free limits and prices change often, so check each service's own page.
+
+Sidekick can also skip its own window and **open the question in the
+Claude app or on claude.ai** instead (Settings > General > Send questions
+to). That always uses your Claude plan, and you press Enter there.
 
 ## What you need
 
 - Windows 10 or 11.
 - Python 3.12 or 3.13 (free, from python.org).
-- A Claude account (any plan, including Free).
-- The Claude desktop app (free, from claude.com/download), signed in.
-  If you prefer, Sidekick can use the Claude website in Chrome instead.
+- One of the AI services above.
 
 ## Install (about 10 minutes, only once)
 
@@ -59,120 +96,135 @@ Have Claude Code in VS Code? Paste the prompt from
 [INSTALL-WITH-CLAUDE-CODE.md](INSTALL-WITH-CLAUDE-CODE.md) into its chat,
 and it will do these steps for you, asking before each one.
 
-**1. Install Python**
+**1. Install Python.** Open https://www.python.org/downloads/windows/ and
+download the "Windows installer (64-bit)" for Python 3.12 or 3.13. Run it,
+tick **"Add python.exe to PATH"**, and click **Install Now**.
 
-1. Open https://www.python.org/downloads/windows/ and download the
-   "Windows installer (64-bit)" for Python 3.12 or 3.13.
-2. Run it. Tick **"Add python.exe to PATH"**, then click **Install Now**.
+**2. Get the Sidekick folder.** On GitHub, open this repository, switch to
+the branch that has Sidekick in it, click **Code > Download ZIP**, unzip
+it, and open the `claude-sidekick` folder inside.
 
-**2. Install the Claude app**
+**3. Set it up.** Double-click **`1-Setup.bat`** and wait until it says
+**Done!** If Windows says "Windows protected your PC", click **More info**,
+then **Run anyway** (only for files you trust).
 
-Download it from https://claude.com/download, install it and sign in.
-(Using Chrome instead? Make sure you are signed in at claude.ai, then pick
-Chrome in Sidekick's Settings later.)
+**4. Start Sidekick.** Double-click **`2-Start-Sidekick.bat`**.
 
-**3. Get the Sidekick folder**
+**5. Choose your AI.** Click **Settings**. On the **General** tab, set
+"Send questions to" to **Answer inside Sidekick**. On the **AI service**
+tab, pick a service and follow its steps below. Click **Save**.
 
-1. On GitHub, open this repository and switch to the branch that has
-   Sidekick in it.
-2. Click **Code**, then **Download ZIP**, and unzip it.
-3. Open the `claude-sidekick` folder inside.
+**6. Optional: start it automatically.** Double-click
+**`3-Start-With-Windows.bat`**.
 
-**4. Set it up**
+### Setting up each AI service
 
-Double-click **`1-Setup.bat`** and wait until it says **Done!**
+**Claude Code (your Claude plan):**
+1. The Claude Code inside VS Code can't be used by other apps, so install
+   it for the terminal. Open PowerShell and run:
+   ```text
+   irm https://claude.ai/install.ps1 | iex
+   ```
+2. Open a new terminal, type `claude`, press Enter, and sign in with your
+   Claude account in the browser.
+3. Restart Sidekick.
 
-If Windows says "Windows protected your PC", click **More info**, then
-**Run anyway**. Only do this for files you trust.
+**Google Gemini:**
+1. Get a free API key in Google AI Studio (aistudio.google.com).
+2. In Sidekick's Settings, paste it next to **Gemini API key** and click
+   **Save key**.
 
-**5. Start Sidekick**
+**Ollama:**
+1. Install Ollama from https://ollama.com/download.
+2. In a terminal, download a model once:
+   ```text
+   ollama pull gemma4:e4b
+   ```
+   On a PC with 8 GB of memory, use `gemma4:e2b` instead, and type that name in Settings.
 
-Double-click **`2-Start-Sidekick.bat`**. The Sidekick window opens. That's it.
+**Claude API:** create a key at https://platform.claude.com/settings/keys,
+then paste it in Settings. Choose `claude-haiku-5-5` as the model if you
+want it cheap.
 
-**6. Optional: start it automatically**
-
-Double-click **`3-Start-With-Windows.bat`** and Sidekick will start by
-itself every time you sign in to Windows.
+**Another service:** find its "base URL" and a model name in its
+documentation, for example `https://api.openai.com/v1`, then fill in
+**Address**, **Model** and the API key.
 
 ## Everyday use
 
-- **Ask about text:** select it, press Ctrl+C, press Ctrl+Shift+Space,
-  type your question and press Enter. Claude opens with everything filled
-  in. Press Enter again in Claude.
-- **One-click help:** instead of typing, click **Explain**, **Fix**,
-  **Summarize**, **Improve writing** or **Draft reply**.
-- **Ask about something on screen:** press Win+Shift+S, drag over the
-  area, then press Ctrl+Shift+Space. In Claude, press **Ctrl+V** to add
-  the picture.
-- **Ask about a file:** in the Sidekick window click **Attach file...**.
-  Sidekick shows the file in File Explorer: drag it into the Claude window.
-- **Follow-up questions:** ask them in Claude, as usual.
-- A dark hint at the top of the screen always says what to press in Claude.
-  Click it to close it.
+- **Select, press the hotkey, read the answer.** It starts with "Help with
+  this": Sidekick works out whether to answer, explain an error,
+  translate, or explain simply. To make it always do one thing (Explain,
+  Fix, Summarize, Improve writing, Draft reply), change "The hotkey asks" in
+  Settings.
+- **Paste back** puts the answer into your app, replacing the selection.
+  **Copy answer** just copies it.
+- **Try another action:** click **Explain**, **Fix**, **Summarize**,
+  **Improve writing** or **Draft reply** in the window.
+- **Follow-up questions:** type them in the window and press Enter.
+- **Screen snips:** press Win+Shift+S, drag over an area, then press the
+  hotkey. The picture is sent with the question. Claude Code can't read
+  pictures; the other services can, if the model supports it.
+- **Files:** click **Attach file...** (PDF, picture or text file).
+- **Stop:** click **Stop** at any time. **Esc** closes the window.
 
-## Three ways to get answers
+## What Sidekick does with your keyboard and clipboard
 
-Choose in **Settings > Send questions to**:
+- **Copying for you.** After you let go of the hotkey, Sidekick presses
+  **Ctrl+Insert** (the classic copy key) in your app. Only if the app
+  ignores it does Sidekick press **Ctrl+C**.
+- **Terminals:** Sidekick never presses Ctrl+C there, because it would
+  stop the running program.
+- **Private windows:** Sidekick never presses anything in password
+  managers, bank sites, private browsing or sign-in screens.
+- **Your clipboard** holds the copied selection afterwards, just as if you
+  had pressed Ctrl+C. Windows' clipboard history (Win+V) still has what
+  you copied before.
+- **Paste back** brings your app to the front and presses **Ctrl+V**
+  (**Shift+Insert** in terminals). If your app does not come to the front,
+  Sidekick doesn't paste anywhere: the answer stays copied for you.
+- To switch all of this off, untick "One key" in Settings. The hotkey then
+  only opens the window, and you copy text yourself.
 
-- **The Claude app on this PC** (the default): uses your Claude plan,
-  no extra cost.
-- **The Claude website in Chrome**: also uses your Claude plan. Sidekick
-  copies your question and opens claude.ai; press **Ctrl+V**, then Enter.
-  (Copying instead of putting the question in the web address keeps it out
-  of Chrome's history.)
-- **Answer inside Sidekick**: Sidekick asks Claude itself and shows the
-  answer in its own window. This needs an Anthropic API key and is billed
-  separately, pay as you go (about 1 to 2 US cents per question). Claude
-  Max, Ultra and Team plans include monthly API credits that can pay for
-  this. To set it up, create a key at
-  https://platform.claude.com/settings/keys, then paste it in Settings.
+## What is sent, and to whom
 
-Sidekick never uses your Claude login itself. Anthropic does not allow
-other apps to do that, so Sidekick uses Claude's official links instead.
+- Only these are sent: your selection or the text in the box, your
+  question, a picture or file you add, and the name of the app and window
+  you were in. You can switch the window name off in Settings.
+- They go only to the AI service you picked. With Ollama, nothing leaves
+  your PC.
+- Sidekick asks before sending something that looks like a password, an
+  API key or a card number.
+- API keys are kept in Windows Credential Manager, not in a file. Your
+  questions and answers are not saved on your PC.
 
-## What is sent, and what is not
+## Costs
 
-- **Nothing is sent until you say so.** In the default mode, you even get
-  to check the question in Claude before you press Enter.
-- Only these are sent: your question, the text in the box, a picture or
-  file you add, and the name of the app and window you were in. You can
-  switch the window name off in Settings.
-- Sidekick never watches your screen or your typing by itself, and never
-  clicks or types in your apps. It only looks at what you copied, and only
-  if you copied it in the last 2 minutes.
-- **Private windows are skipped.** In password managers, banking sites,
-  private browsing and sign-in screens, Sidekick reads nothing and does
-  not send the window name. You can add your own words in Settings.
-- If a password manager marks a copy as private, Sidekick ignores it.
-- If the text looks like it contains a password, an API key or a card
-  number, Sidekick asks before going on.
-
-## Other free helpers from Anthropic
-
-These also use your Claude plan, so they cost nothing extra. They work
-well next to Sidekick:
-
-- **Claude in Chrome** (a browser extension, paid plans): reads and works
-  on the web page you have open in Chrome.
-- **Claude for Excel, Word and PowerPoint** (Office add-ins, paid plans):
-  Claude works directly on your open document.
-- **The Claude app's own shortcut**: some reports say the Windows app has a
-  quick-question shortcut (Ctrl+Alt+Space). Look in the Claude app's
-  settings. Sidekick avoids that key so both can be used.
+- **Prices you can change.** Settings > AI service has a price box for each
+  service ($ per million tokens). Sidekick uses those prices to estimate
+  costs, so the estimates stay right when prices change.
+- **Built-in Claude prices.** Sidekick knows the Claude API prices as of
+  November 2026. Without your own prices, Ollama and Gemini count as free.
+- **Daily limit.** Sidekick stops when today's estimated spending reaches
+  your limit ($2 to start with; 0 means no limit).
+- **Big requests.** Before sending a long PDF to the Claude API, Sidekick
+  shows the cost and asks first.
 
 ## Settings
 
-Click **Settings** in the Sidekick window to change:
+**General tab:**
+- where questions go (answers inside Sidekick, the Claude app, or Chrome)
+- one-key mode, and what the hotkey asks
+- the hotkey itself
+- whether the window name is sent
+- your private words
 
-- where questions go (the Claude app, Chrome, or inside Sidekick),
-- the hotkey,
-- whether the app and window name are sent,
-- the list of "private words",
-- for "Answer inside Sidekick" only: the API key, the Claude model, how
-  hard Claude thinks, and a daily spending limit ($2 to start with).
+**AI service tab:**
+- the service, its model, and its key or address
+- your prices and the daily limit
 
-Sidekick keeps its settings in `%APPDATA%\Sidekick\config.json` and writes
-problems (never your questions) to `%APPDATA%\Sidekick\sidekick.log`.
+Settings are saved in `%APPDATA%\Sidekick\config.json`. Problems (never
+your questions) are logged to `%APPDATA%\Sidekick\sidekick.log`.
 
 ## Good to know about the hotkey
 
@@ -181,38 +233,53 @@ problems (never your questions) to `%APPDATA%\Sidekick\sidekick.log`.
   whole sheet. If you need those, choose another hotkey in Settings.
 - If another program already uses Ctrl+Shift+Space, Sidekick switches to
   Ctrl+Alt+Shift+Space and tells you in its window.
-- If no hotkey works, click **Ask now** in the Sidekick window instead.
+- If no hotkey works, click **Ask now** in the Sidekick window.
 
 ## If something goes wrong
 
-- **"Python was not found":** install Python (step 1), then run
-  `1-Setup.bat` again.
-- **"Missing tcl/tk":** run the Python installer again, choose **Modify**,
-  tick **tcl/tk and IDLE**, then run `1-Setup.bat` again.
-- **Claude opened, but the question box is empty:** press Ctrl+V.
-  Sidekick copies your question whenever it can't fill the box directly.
-- **The Claude website opened instead of the app:** the Claude app is not
-  installed, or Windows could not open it. Install it from claude.com/download.
-- **The hotkey does nothing:** look at the Sidekick window. It says which
-  hotkey is active. Try **Ask now**, or pick another hotkey in Settings.
-- **"Sidekick is already running":** look for it on the taskbar.
+- **"Claude Code was not found":** install it for the terminal (see
+  above), then restart Sidekick.
+- **"Claude Code is not signed in":** open a terminal, run `claude`, and
+  sign in.
+- **"Gemini's free limit is used up":** wait (the daily limit resets at
+  midnight US Pacific time), or switch model or service in Settings.
+- **"Ollama is not running":** start the Ollama app.
+- **"The model ... is not installed in Ollama":** run the `ollama pull`
+  command shown.
+- **Nothing was copied when I pressed the hotkey:** some apps ignore
+  copy keys sent by other programs, and apps running "as administrator"
+  can't be reached. Press Ctrl+C yourself, then the hotkey.
+- **"Python was not found" or "missing tcl/tk":** reinstall Python
+  (step 1), ticking "tcl/tk and IDLE", then run `1-Setup.bat` again.
 - **Anything else:** the details are in `%APPDATA%\Sidekick\sidekick.log`.
+
+## Other free helpers from Anthropic
+
+These use your Claude plan too:
+
+- **Claude in Chrome** (browser extension, paid plans): works on the web
+  page you have open.
+- **Claude for Excel, Word and PowerPoint** (Office add-ins, paid plans):
+  works directly in your document.
 
 ## For developers
 
 ```text
 sidekick/
-  app.py           main window, wires everything together
-  popup.py         the Ask window
-  settings_ui.py   the Settings window
-  handoff.py       opening Claude's app or website with a question
-  claude_client.py "Answer inside Sidekick" (official anthropic library)
-  capture.py       decides what to pick up from the clipboard
-  privacy.py       private windows and secret detection
-  attachments.py   pictures, PDFs and text files
-  costs.py         cost estimates and the daily total (API mode)
-  platform_win.py  Windows hotkey, window name, clipboard, opening apps
-tests/             121 tests
+  app.py               main window; hotkey, one-key mode, paste back
+  popup.py             the answer window
+  settings_ui.py       the Settings window (General, AI service)
+  services.py          picks the AI service
+  claude_code_client.py  Claude Code (claude -p), tools off
+  claude_client.py     Claude API (official anthropic library)
+  compat_client.py     Gemini, Ollama, other OpenAI-compatible APIs
+  handoff.py           opening the Claude app or website
+  capture.py           what to pick up from the clipboard
+  privacy.py           private windows and secret detection
+  attachments.py       pictures, PDFs and text files
+  costs.py             cost estimates, your prices, the daily total
+  platform_win.py      Windows: hotkey, copy and paste keys, opening apps
+tests/                 176 tests
 ```
 
 Run the tests from the `tests` folder:
@@ -225,12 +292,7 @@ python -m pytest -q
 On Linux, run them with `xvfb-run -a python -m pytest -q`, so the
 window tests get a virtual screen.
 
-The tests need no API key and cost nothing: they use a fake Claude
-server and stand-ins for Windows. The Windows-only parts and the `.bat`
-files have not been run on real Windows yet.
-
-The `claude://claude.ai/new?q=...` link is documented by Anthropic in
-"Open Claude Desktop with a link" (support.claude.com). It fills in the
-question but does not send it, and it cuts text at about 14,000
-characters. Sidekick uses the clipboard instead for anything longer than
-a short link.
+The tests need no API key and cost nothing: they use fake AI services and
+stand-ins for Windows and for the `claude` command. The Windows-only parts
+(the hotkey, the copy and paste key presses, the `.bat` files) have not
+been run on real Windows yet.
