@@ -307,7 +307,7 @@ sidekick/
   attachments.py       pictures, PDFs and text files
   costs.py             cost estimates, your prices, the daily total
   platform_win.py      Windows: hotkey, copy and paste keys, opening apps
-tests/                 179 tests
+tests/                 180 tests
 ```
 
 Run the tests from the `tests` folder:

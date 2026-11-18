@@ -41,7 +41,7 @@ Then:
 Do not run the .bat files from your shell: some of them wait for a key press. These commands do the same job.
 
 STEP 4 - Ask me which AI should answer, and set it up:
-  A) Claude Code with my Claude plan (no API key; needs Claude Pro or higher) - recommended if I have a paid Claude plan
+  A) Claude Code with my Claude plan (no API key; needs Claude Pro or higher) - Sidekick's default ("Claude CLI mode"); recommended if I have a paid Claude plan
   B) Google Gemini free tier (I will paste my own key into Sidekick's Settings later; Google may use free-tier text)
   C) Ollama: a free AI on this PC (private; needs 8 GB of memory or more)
   D) No answers inside Sidekick: open the question in the Claude desktop app instead
