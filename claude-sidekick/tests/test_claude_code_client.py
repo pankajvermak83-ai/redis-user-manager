@@ -43,7 +43,8 @@ def test_answer_streams_from_claude_code(run, tmp_path):
     assert call["stdin"] == "Why is the sky blue?"
     assert call["cwd"] == str(tmp_path / "room")  # an empty folder of Sidekick's own
     args = call["args"]
-    for flag in ("-p", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--no-session-persistence"):
+    for flag in ("-p", "--verbose", "--include-partial-messages", "--strict-mcp-config",
+                 "--no-session-persistence", "--safe-mode"):
         assert flag in args
     assert args[args.index("--output-format") + 1] == "stream-json"
     assert args[args.index("--tools") + 1] == ""  # every tool switched off
@@ -121,3 +122,15 @@ def test_api_keys_are_removed_so_your_plan_is_used(run, monkeypatch):
 def test_plan_only_environment_keeps_everything_else():
     env = plan_only_environment({"PATH": "C:\\bin", "anthropic_api_key": "x", "HOME": "h"})
     assert env == {"PATH": "C:\\bin", "HOME": "h"}
+
+
+def test_older_claude_code_without_safe_mode(tmp_path, monkeypatch):
+    log = tmp_path / "calls.jsonl"
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "no_safe_mode")
+    c = ClaudeCodeClient(Settings(), command=[sys.executable, FAKE], workdir=tmp_path / "room")
+    result = c.ask(Conversation(), "hi", lambda _t: None)
+    assert result.text == "Claude Code says hi."
+    c.ask(Conversation(), "again", lambda _t: None)
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert ["--safe-mode" in call["args"] for call in calls] == [True, False, False]

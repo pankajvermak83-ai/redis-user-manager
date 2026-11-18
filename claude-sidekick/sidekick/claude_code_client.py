@@ -7,6 +7,8 @@ scripted mode, `claude -p`, like this:
   * all of Claude Code's tools are switched off (--tools ""), so it can't run
     commands or open files: it only answers;
   * it runs in an empty folder of Sidekick's own and loads no MCP servers;
+  * safe mode (--safe-mode) keeps your own CLAUDE.md files, hooks, plugins,
+    skills and auto memory out of it; sign-in works as usual;
   * nothing is saved as a session (--no-session-persistence);
   * API-key settings are removed from its environment: Anthropic's docs say
     that in this mode an ANTHROPIC_API_KEY, if present, is always used and
@@ -28,6 +30,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -109,6 +112,15 @@ def build_prompt(conversation: Conversation, new_message: str) -> str:
     return "\n".join(lines)
 
 
+@dataclass
+class _Run:
+    cancelled: bool = False
+    final: dict | None = None
+    pieces: list = field(default_factory=list)
+    whole_answer: str = ""
+    errors: str = ""
+
+
 class ClaudeCodeClient:
     def __init__(self, settings, command: list[str] | None = None, *, workdir: Path | None = None,
                  timeout: float = 180.0):
@@ -116,6 +128,7 @@ class ClaudeCodeClient:
         self._command = command
         self._workdir = workdir or (config_dir() / "claude-code")
         self._timeout = timeout
+        self._safe_mode = True  # switched off only for Claude Code versions without it
 
     model = property(lambda self: self._settings.claude_code_model or "Claude Code")
 
@@ -139,6 +152,10 @@ class ClaudeCodeClient:
             "--system-prompt-file", str(prompt_file), "--tools", "", "--strict-mcp-config",
             "--max-turns", "1", "--no-session-persistence",
         ]
+        if self._safe_mode:
+            # Your own CLAUDE.md files, hooks, plugins, skills and auto memory
+            # are for your coding: keep them out of Sidekick's questions.
+            args.append("--safe-mode")
         if self._settings.claude_code_model:
             args += ["--model", self._settings.claude_code_model]
         return args
@@ -156,6 +173,41 @@ class ClaudeCodeClient:
         prompt_file = self._workdir / "sidekick-instructions.txt"
         prompt_file.write_text(SYSTEM_PROMPT, encoding="utf-8")
 
+        run = self._run(prompt_file, prompt, on_text, should_stop)
+        if self._safe_mode and run.final is None and "--safe-mode" in run.errors and "unknown option" in run.errors.lower():
+            # An older Claude Code without safe mode: ask again without it.
+            log.warning("This Claude Code has no --safe-mode; continuing without it")
+            self._safe_mode = False
+            run = self._run(prompt_file, prompt, on_text, should_stop)
+        if run.cancelled:
+            return AskResult(cancelled=True)
+
+        final = run.final
+        if final is None or final.get("is_error"):
+            said = str((final or {}).get("result") or run.errors).strip()
+            low = said.lower()
+            if any(word in low for word in ("login", "log in", "sign in", "api key", "authenticat")):
+                raise AskError(NOT_SIGNED_IN)
+            if "unknown option" in low or "unrecognized" in low:
+                raise AskError("Your Claude Code is too old for Sidekick. Update it (run: claude update) and try again.")
+            raise AskError(f"Claude Code reported a problem: {said[-400:] or 'it stopped without an answer.'}")
+
+        text = "".join(run.pieces)
+        if not text and run.whole_answer:  # older Claude Code: no token-by-token updates
+            text = run.whole_answer
+            on_text(text)
+        if not text and isinstance(final.get("result"), str):
+            text = final["result"]
+            on_text(text)
+        result = AskResult(text=text, stop_reason=final.get("subtype"), model=self.model)
+        if not text.strip():
+            result.notice = "Claude Code sent back an empty answer. Try asking again."
+        conversation.messages.append({"role": "user", "content": new_message})
+        conversation.messages.append({"role": "assistant", "content": text})
+        return result
+
+    def _run(self, prompt_file: Path, prompt: str, on_text, should_stop) -> "_Run":
+        """Start Claude Code once and collect what it prints."""
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
         try:
             process = subprocess.Popen(
@@ -180,21 +232,21 @@ class ClaudeCodeClient:
             errors.append(process.stderr.read())
 
         threading.Thread(target=read_out, daemon=True).start()
-        threading.Thread(target=read_err, daemon=True).start()
+        err_thread = threading.Thread(target=read_err, daemon=True)
+        err_thread.start()
         try:
             process.stdin.write(prompt.encode("utf-8"))
             process.stdin.close()
         except OSError:
             pass  # it already stopped; the reason shows below
 
-        pieces: list[str] = []
-        whole_answer = ""
-        final = None
+        run = _Run()
         deadline = time.monotonic() + self._timeout
         try:
             while True:
                 if should_stop():
-                    return AskResult(cancelled=True)
+                    run.cancelled = True
+                    return run
                 if time.monotonic() > deadline:
                     raise AskError("Claude Code took too long to answer. Try again.")
                 try:
@@ -213,13 +265,14 @@ class ClaudeCodeClient:
                 if kind == "stream_event":
                     delta = (event.get("event") or {}).get("delta") or {}
                     if delta.get("type") == "text_delta" and delta.get("text"):
-                        pieces.append(delta["text"])
+                        run.pieces.append(delta["text"])
                         on_text(delta["text"])
                 elif kind == "assistant":
                     content = (event.get("message") or {}).get("content") or []
-                    whole_answer += "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+                    run.whole_answer += "".join(
+                        b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
                 elif kind == "result":
-                    final = event
+                    run.final = event
         finally:
             if process.poll() is None:
                 process.kill()
@@ -227,26 +280,6 @@ class ClaudeCodeClient:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
-
-        if final is None or final.get("is_error"):
-            said = str((final or {}).get("result") or b"".join(errors).decode("utf-8", "replace")).strip()
-            low = said.lower()
-            if any(word in low for word in ("login", "log in", "sign in", "api key", "authenticat")):
-                raise AskError(NOT_SIGNED_IN)
-            if "unknown option" in low or "unrecognized" in low:
-                raise AskError("Your Claude Code is too old for Sidekick. Update it (run: claude update) and try again.")
-            raise AskError(f"Claude Code reported a problem: {said[-400:] or 'it stopped without an answer.'}")
-
-        text = "".join(pieces)
-        if not text and whole_answer:  # older Claude Code: no token-by-token updates
-            text = whole_answer
-            on_text(text)
-        if not text and isinstance(final.get("result"), str):
-            text = final["result"]
-            on_text(text)
-        result = AskResult(text=text, stop_reason=final.get("subtype"), model=self.model)
-        if not text.strip():
-            result.notice = "Claude Code sent back an empty answer. Try asking again."
-        conversation.messages.append({"role": "user", "content": new_message})
-        conversation.messages.append({"role": "assistant", "content": text})
-        return result
+            err_thread.join(timeout=2)
+            run.errors = b"".join(errors).decode("utf-8", "replace")
+        return run

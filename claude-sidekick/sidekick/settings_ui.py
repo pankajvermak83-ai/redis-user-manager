@@ -189,7 +189,8 @@ class SettingsDialog:
         tip(f, 2, "Needs a paid Claude plan (Pro or higher). Answers count toward your plan's usage limits "
                   "(shared with Claude chat and Claude Code); there is no extra bill unless you turned on "
                   "usage credits in Claude's settings. Sidekick removes any API key when it runs Claude Code, "
-                  "so your plan is used. Tools are off, so it only answers. Text only.")
+                  "so your plan is used. Tools are off and your own CLAUDE.md, hooks and plugins are not "
+                  "loaded (safe mode), so it only answers. Text only.")
 
         # Claude API
         f = self.service_frames["claude"]

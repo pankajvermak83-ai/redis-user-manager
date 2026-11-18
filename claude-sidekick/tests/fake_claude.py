@@ -3,7 +3,7 @@
 It records how it was called (to the file named in FAKE_CLAUDE_LOG), reads the
 question from stdin, and prints Claude Code's stream-json lines. FAKE_CLAUDE_MODE
 picks the behaviour: ok (default), old (no token-by-token events), signed_out,
-slow, crash. FAKE_CLAUDE_TEXT sets the answer (pieces split by |)."""
+slow, crash, no_safe_mode. FAKE_CLAUDE_TEXT sets the answer (pieces split by |)."""
 
 import json
 import os
@@ -25,6 +25,9 @@ def say(obj):
     print(json.dumps(obj), flush=True)
 
 
+if mode == "no_safe_mode" and "--safe-mode" in sys.argv:
+    print("error: unknown option '--safe-mode'", file=sys.stderr)
+    sys.exit(1)
 if mode == "crash":
     print("error: unknown option '--tools'", file=sys.stderr)
     sys.exit(1)

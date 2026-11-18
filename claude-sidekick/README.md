@@ -148,6 +148,11 @@ According to Anthropic's help pages (November 2026):
   Claude Code, so your plan is used.
 - **Make your limits last.** In Settings, choose the model `haiku` (or
   `sonnet`) for Claude Code, and keep the bigger model for your coding.
+- **Kept apart from your coding setup.** Sidekick runs Claude Code in its
+  safe mode, with all tools switched off, in an empty folder of its own.
+  Your CLAUDE.md files, hooks, plugins, skills, MCP servers and auto memory
+  are not loaded, so they don't change Sidekick's answers or use up tokens.
+  Sign-in works as usual.
 
 **Google Gemini:**
 1. Get a free API key in Google AI Studio (aistudio.google.com).
@@ -299,7 +304,7 @@ sidekick/
   attachments.py       pictures, PDFs and text files
   costs.py             cost estimates, your prices, the daily total
   platform_win.py      Windows: hotkey, copy and paste keys, opening apps
-tests/                 178 tests
+tests/                 179 tests
 ```
 
 Run the tests from the `tests` folder:
