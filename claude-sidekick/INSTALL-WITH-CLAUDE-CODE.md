@@ -25,10 +25,14 @@ If only "import tkinter" fails: tell me to run the Python installer again, choos
 
 STEP 2 - Get the code (or update it if it is already there):
   if (Test-Path "$HOME\SidekickApp\.git") { git -C "$HOME\SidekickApp" pull } else { git clone --branch claude/sharp-faraday-hmbw03 --single-branch https://github.com/pankajvermak83-ai/redis-user-manager.git "$HOME\SidekickApp" }
+If $HOME\SidekickApp already exists but has no .git folder (an older ZIP download), ask me, then rename it to SidekickApp-old and run the command again.
 If git is not available: download https://github.com/pankajvermak83-ai/redis-user-manager/archive/refs/heads/claude/sharp-faraday-hmbw03.zip, unzip it into $HOME\SidekickApp, and use the "claude-sidekick" folder inside it as App.
 Check that App contains requirements.txt and a folder named "sidekick".
 
-STEP 3 - Make Sidekick's private Python folder (.venv) and install its 3 libraries (anthropic, pillow, keyring):
+STEP 3 - Make Sidekick's private Python folder (.venv) and install its 3 libraries (anthropic, pillow, keyring).
+First stop Sidekick if an older copy is running, so its files can be updated:
+  Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object CommandLine -like '*sidekick*' | ForEach-Object { Stop-Process -Id $_.ProcessId }
+Then:
   Set-Location "$HOME\SidekickApp\claude-sidekick"
   py -3 -m venv .venv
   .\.venv\Scripts\python.exe -m pip install --disable-pip-version-check -r requirements.txt
@@ -81,7 +85,7 @@ STEP 5 - Save Sidekick's settings for my choice (keeps any other settings alread
   if (Test-Path $cfg) { (Get-Content $cfg -Raw | ConvertFrom-Json).psobject.Properties | ForEach-Object { $data[$_.Name] = $_.Value } }
   $data['instant'] = $true
   $data['hotkey_action'] = 'smart'
-  # A:  $data['send_to'] = 'api'; $data['provider'] = 'claude_code'
+  # A:  $data['send_to'] = 'api'; $data['provider'] = 'claude_code'; $data['claude_code_model'] = 'haiku'   (or 'sonnet': ask me; haiku uses the least of my plan's limits)
   # B:  $data['send_to'] = 'api'; $data['provider'] = 'gemini'
   # C:  $data['send_to'] = 'api'; $data['provider'] = 'ollama'; $data['ollama_model'] = 'gemma4:e4b'   (or gemma4:e2b)
   # D:  $data['send_to'] = 'claude_app'
