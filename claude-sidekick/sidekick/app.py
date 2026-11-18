@@ -22,6 +22,7 @@ from .handoff import TARGET_NAMES, plan_handoff
 from .hotkeys import Hotkey, parse_hotkey
 from .platform_base import Platform, WindowInfo, get_platform
 from .popup import Dialogs, Popup
+from .claude_code_client import find_claude
 from .privacy import is_private_window
 from .settings_ui import SettingsDialog
 
@@ -142,6 +143,9 @@ class SidekickApp:
 
         key_text = f"Answers appear here in Sidekick, from {services.describe(self.settings)}."
         provider = self.settings.provider
+        if provider == "claude_code" and not find_claude(self.settings.claude_code_command):
+            key_text += ("\nClaude Code was not found on this PC yet: install it for the terminal "
+                         "(see Settings > AI service), then restart Sidekick.")
         if provider in ("claude", "gemini"):
             if services.load_key(provider):
                 key_text += " API key: saved"

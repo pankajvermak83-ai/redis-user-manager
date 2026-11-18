@@ -43,12 +43,13 @@ EFFORTS = ("low", "medium", "high")
 DEFAULT_EFFORT = "medium"
 
 # Where a question goes when you click the button in the Ask window.
+#   api:        the answer appears in Sidekick's own window, from the AI
+#               service chosen below (by default Claude Code with your
+#               Claude plan: "Claude CLI mode", no API key, no extra bill).
 #   claude_app: the Claude desktop app opens with the question filled in.
 #   chrome:     the Claude website (claude.ai) opens in Chrome.
-#   api:        Sidekick asks Claude itself and shows the answer (API key).
-# The first two use your normal Claude plan, so there is no extra bill.
 SEND_TO_CHOICES = ("claude_app", "chrome", "api")
-DEFAULT_SEND_TO = "claude_app"
+DEFAULT_SEND_TO = "api"
 
 # Which AI answers when the answer is shown inside Sidekick ("api" above).
 #   claude: Anthropic's Claude API (an API key, pay per use)

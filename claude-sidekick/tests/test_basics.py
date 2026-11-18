@@ -32,11 +32,13 @@ def test_settings_survive_a_save_and_load(tmp_path):
     assert not (tmp_path / "config.json.tmp").exists()  # the temporary file was renamed
 
 
-def test_questions_go_to_the_claude_app_by_default():
-    assert Settings().send_to == "claude_app"
-    assert Settings.from_dict({"send_to": "api"}).send_to == "api"
+def test_claude_cli_mode_is_on_by_default():
+    s = Settings()
+    # answers inside Sidekick, from Claude Code with your Claude plan, one key
+    assert (s.send_to, s.provider, s.instant) == ("api", "claude_code", True)
+    assert Settings.from_dict({"send_to": "claude_app"}).send_to == "claude_app"
     assert Settings.from_dict({"send_to": "chrome"}).send_to == "chrome"
-    assert Settings.from_dict({"send_to": "fax"}).send_to == "claude_app"
+    assert Settings.from_dict({"send_to": "fax"}).send_to == "api"
 
 
 def test_damaged_or_missing_settings_fall_back_to_defaults(tmp_path):

@@ -627,7 +627,7 @@ def q_of(url):
 @pytest.fixture
 def ho(tmp_path, monkeypatch, api):
     """Sidekick with its default setting: questions open in the Claude app."""
-    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(instant=False))
+    harness = Harness(tmp_path, monkeypatch, api, settings=Settings(send_to="claude_app", instant=False))
     yield harness
     errors = list(harness.errors)
     harness.close()
@@ -944,7 +944,7 @@ def test_a_fresh_snip_is_asked_about_right_away(tmp_path, monkeypatch, api, comp
 
 
 def test_one_key_with_the_claude_app_opens_it_straight_away(tmp_path, monkeypatch, api):
-    with started(tmp_path, monkeypatch, api) as h:  # all defaults: the Claude app, one-key mode on
+    with started(tmp_path, monkeypatch, api, send_to="claude_app") as h:  # the Claude app, one-key mode on
         press_and_wait(h, selection="=VLOOKUP(A2,B:C,2)")
         (how, url), = h.platform.opened
         question = q_of(url)
@@ -1046,3 +1046,14 @@ def test_settings_check_what_you_type(tmp_path, monkeypatch, api):
         d.model_var.set("claude-haiku-5-5")
         d.on_save()
         assert not d.alive and load_settings(h.settings_path).model == "claude-haiku-5-5"
+
+
+def test_claude_cli_mode_is_the_default(tmp_path, monkeypatch, api):
+    monkeypatch.setattr("sidekick.app.find_claude", lambda configured="": None)
+    with started(tmp_path, monkeypatch, api) as h:  # nothing chosen: all defaults
+        s = h.app.settings
+        assert (s.send_to, s.provider, s.instant) == ("api", "claude_code", True)
+        text = h.label(h.app.key_label)
+        assert "from Claude Code on this PC, with your Claude plan" in text
+        assert "Claude Code was not found on this PC yet" in text
+        assert "Sidekick copies it and asks" in h.label(h.app.howto_label)

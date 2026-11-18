@@ -8,6 +8,7 @@ You choose which AI answers, and you can switch at any time (for example
 if prices change):
 
 - **Claude Code**, with your Claude plan: no API key, no extra bill
+  ("Claude CLI mode", **switched on by default**)
 - **Google Gemini**: has a small free tier
 - **Ollama**: a free AI running on your own PC (private, works offline)
 - **the Claude API**: pay per use
@@ -112,9 +113,11 @@ then **Run anyway** (only for files you trust).
 
 **4. Start Sidekick.** Double-click **`2-Start-Sidekick.bat`**.
 
-**5. Choose your AI.** Click **Settings**. On the **General** tab, set
-"Send questions to" to **Answer inside Sidekick**. On the **AI service**
-tab, pick a service and follow its steps below. Click **Save**.
+**5. Set up Claude Code.** Claude CLI mode is on from the start: answers
+appear inside Sidekick, from Claude Code with your Claude plan. Install
+and sign in to Claude Code as shown below ("Claude Code (your Claude
+plan)"). To use a different AI instead, open **Settings > AI service**,
+pick it, follow its steps below, and click **Save**.
 
 **6. Optional: start it automatically.** Double-click
 **`3-Start-With-Windows.bat`**.
