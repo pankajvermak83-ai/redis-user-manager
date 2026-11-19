@@ -97,7 +97,7 @@ For each one I want, set $folder = [Environment]::GetFolderPath('Programs') for 
   $lnk.Save()
 (To undo later: press Win+R, type shell:programs or shell:startup, and delete Sidekick.lnk there.)
 
-STEP 10 (optional, ask me first) - Run Sidekick's 186 automatic tests on this PC. Warn me first that small test windows will flash on screen for about a minute and my clipboard will be overwritten:
+STEP 10 (optional, ask me first) - Run Sidekick's automatic tests on this PC. Warn me first that small test windows will flash on screen for about a minute and my clipboard will be overwritten:
   Set-Location "$HOME\SidekickApp\claude-sidekick"
   .\.venv\Scripts\python.exe -m pip install --disable-pip-version-check pytest
   Set-Location tests
