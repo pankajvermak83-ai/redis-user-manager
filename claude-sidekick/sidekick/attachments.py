@@ -6,6 +6,7 @@ import base64
 import io
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 
 # Formats Claude accepts as pictures.
@@ -18,7 +19,14 @@ CONVERTIBLE_IMAGES = {".bmp", ".tif", ".tiff"}
 OFFICE_FILES = {".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".odt", ".ods", ".odp"}
 
 MAX_IMAGE_BYTES = 3_500_000
+# A PDF is sent whole (pictures, tables and layout included) up to this size
+# and page count. Claude reads at most 100 pages of PDFs in one question.
 MAX_PDF_BYTES = 20_000_000
+MAX_PDF_PAGES = 100
+# A bigger PDF is sent as its text instead: up to this many characters
+# (about 50,000 tokens), read in at most this many seconds.
+MAX_PDF_TEXT_CHARS = 200_000
+MAX_PDF_SECONDS = 15.0
 MAX_TEXT_FILE_BYTES = 400_000
 
 
@@ -37,6 +45,8 @@ class Attachment:
 
     def describe(self) -> str:
         label = {"image": "Picture", "pdf": "PDF", "text": "File"}[self.kind]
+        if self.kind == "text" and self.name.lower().endswith(".pdf"):
+            label = "Text of PDF"
         text = f"{label}: {self.name}" if self.name else label
         return f"{text} ({self.detail})" if self.detail else text
 
@@ -96,6 +106,72 @@ def image_attachment(img: object, name: str, max_edge: int) -> Attachment:
     if len(data) > MAX_IMAGE_BYTES:
         raise AttachmentError("That picture is too big to send. Snip a smaller area.")
     return Attachment("image", name, media_type, data, f"{img.width} x {img.height}")
+
+
+def _pypdf():
+    try:
+        import pypdf
+
+        return pypdf
+    except Exception:
+        return None
+
+
+def _open_pdf(path: str):
+    """A pypdf reader for the file, or None if it can't be read."""
+    pypdf = _pypdf()
+    if pypdf is None:
+        return None
+    try:
+        reader = pypdf.PdfReader(path)
+        if reader.is_encrypted:
+            reader.decrypt("")  # many "protected" PDFs open with no password
+        len(reader.pages)
+        return reader
+    except Exception:
+        return None
+
+
+def is_pdf(path: str) -> bool:
+    return path.lower().endswith(".pdf")
+
+
+def _pdf_as_text(path: str, name: str, size: int, pages: int | None, reader) -> Attachment:
+    """A PDF too big to send whole: send the text of as many pages as fit."""
+    why = _size_label(size) if size > MAX_PDF_BYTES else f"{pages} pages"
+    if reader is None:
+        if _pypdf() is None:
+            raise AttachmentError(
+                f"'{name}' is too big to send whole ({why}), and reading its text needs the pypdf "
+                "library. Double-click 4-Update-Sidekick.bat (or 1-Setup.bat), then try again.")
+        raise AttachmentError(
+            f"'{name}' is too big to send whole ({why}), and Sidekick could not read it "
+            "(it may be damaged or locked with a password).")
+    parts: list[str] = []
+    used, chars, started = 0, 0, time.monotonic()
+    for number, page in enumerate(reader.pages, 1):
+        try:
+            text = (page.extract_text() or "").strip()
+        except Exception:
+            text = ""  # one unreadable page doesn't stop the rest
+        if text:
+            piece = f"--- Page {number} ---\n{text}"
+            if parts and chars + len(piece) > MAX_PDF_TEXT_CHARS:
+                break
+            parts.append(piece[:MAX_PDF_TEXT_CHARS])
+            chars += len(piece) + 2
+        used = number
+        if time.monotonic() - started > MAX_PDF_SECONDS:
+            break
+    if not parts:
+        raise AttachmentError(
+            f"'{name}' is too big to send whole ({why}), and it has no text Sidekick can read "
+            "(it may be scanned pages).\n\nOpen it, snip the page you need with Win+Shift+S, "
+            "and press the hotkey. Or save just the pages you need as a smaller PDF and attach that.")
+    total = pages or used
+    which = f"text of all {total} pages" if used >= total else f"text of pages 1-{used} of {total}"
+    return Attachment("text", name, "text/plain", "\n\n".join(parts).encode("utf-8"),
+                      f"{_size_label(size)} PDF, {which}")
 
 
 def _decode_text(data: bytes) -> str:
@@ -168,16 +244,18 @@ def _load_file(path: str, max_edge: int) -> Attachment:
         raise AttachmentError("This picture needs the Pillow library. Run 1-Setup.bat again.")
 
     if ext == ".pdf":
-        if size > MAX_PDF_BYTES:
-            raise AttachmentError(
-                f"'{name}' is {_size_label(size)}, which is too big to send. "
-                "Copy the pages or text you need instead."
-            )
         with open(path, "rb") as f:
-            data = f.read()
-        if not data.startswith(b"%PDF"):
+            start = f.read(8)
+        if not start.startswith(b"%PDF"):
             raise AttachmentError(f"'{name}' does not look like a real PDF file.")
-        return Attachment("pdf", name, "application/pdf", data, _size_label(size))
+        reader = _open_pdf(path)
+        pages = len(reader.pages) if reader is not None else None
+        if size <= MAX_PDF_BYTES and (pages is None or pages <= MAX_PDF_PAGES):
+            with open(path, "rb") as f:
+                data = f.read()
+            detail = _size_label(size) + (f", {pages} page{'s' if pages != 1 else ''}" if pages else "")
+            return Attachment("pdf", name, "application/pdf", data, detail)
+        return _pdf_as_text(path, name, size, pages, reader)
 
     # Anything else is tried as plain text (notes, CSV, code, logs...).
     if size > MAX_TEXT_FILE_BYTES:

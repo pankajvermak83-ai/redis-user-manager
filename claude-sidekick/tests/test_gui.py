@@ -512,6 +512,7 @@ def test_big_pdf_asks_before_sending(h, tmp_path):
     pdf.write_bytes(b"%PDF-1.4\n% pretend this is a long report\n")
     h.dialogs.file = str(pdf)
     h.popup.attach_button.invoke()
+    h.wait(lambda: not h.popup._busy)  # PDFs are read in the background
     h.api.count_reply = {"input_tokens": 200_000}  # about $0.80 to send
 
     h.dialogs.answer = False
@@ -725,6 +726,7 @@ def test_attached_pdf_is_shown_in_file_explorer(ho, tmp_path):
     pdf.write_bytes(b"%PDF-1.4\n")
     ho.dialogs.file = str(pdf)
     ho.popup.attach_button.invoke()
+    ho.wait(lambda: not ho.popup._busy)  # PDFs are read in the background
     open_in_claude(ho, "Summarize this report")
 
     assert ho.platform.revealed == [str(pdf)]
@@ -1142,3 +1144,19 @@ def test_settings_lists_open_and_say_when_they_apply(tmp_path, monkeypatch, api)
             box.tk.call("ttk::combobox::Unpost", box)
             h.pump(0.1)
         d.close()
+
+
+def test_a_big_pdf_is_read_in_the_background_and_sent_as_text(h, tmp_path, monkeypatch):
+    from pdf_maker import make_pdf
+    monkeypatch.setattr("sidekick.attachments.MAX_PDF_BYTES", 100)  # this small file counts as big
+    h.set_key()
+    h.press_hotkey(EXCEL)
+    pdf = tmp_path / "manual.pdf"
+    make_pdf(pdf, ["Install the printer", "Clean the drum"])
+    h.dialogs.file = str(pdf)
+    h.popup.attach_button.invoke()
+    assert h.label(h.popup.status_label) == "Reading the PDF..."
+    h.wait(lambda: not h.popup._busy)
+    assert h.label(h.popup.attach_label).startswith("Attached: Text of PDF: manual.pdf (")
+    h.ask("Summarize this manual")
+    assert '<file name="manual.pdf">\n--- Page 1 ---\nInstall the printer' in h.sent_text()

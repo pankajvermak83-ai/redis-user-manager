@@ -34,12 +34,12 @@ Then:
 If $HOME\SidekickApp already exists but has no .git folder (an older ZIP download), ask me, then rename it to SidekickApp-old and run the command again.
 Check that this file exists: $HOME\SidekickApp\claude-sidekick\sidekick\claude_code_client.py
 
-STEP 3 - Stop an older Sidekick if one is running, then make Sidekick's private Python folder (.venv) and install its 3 libraries:
+STEP 3 - Stop an older Sidekick if one is running, then make Sidekick's private Python folder (.venv) and install its libraries:
   Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object CommandLine -like '*sidekick*' | ForEach-Object { Stop-Process -Id $_.ProcessId }
   Set-Location "$HOME\SidekickApp\claude-sidekick"
   py -3 -m venv .venv
   .\.venv\Scripts\python.exe -m pip install --disable-pip-version-check -r requirements.txt
-  .\.venv\Scripts\python.exe -c "import tkinter, anthropic, PIL, keyring, sidekick.app; print('Sidekick is ready')"
+  .\.venv\Scripts\python.exe -c "import tkinter, anthropic, PIL, keyring, pypdf, sidekick.app; print('Sidekick is ready')"
 (Use the Python command that worked in step 1 instead of "py -3" if needed. Don't run the .bat files from your shell: some of them wait for a key press.)
 
 STEP 4 - Claude Code for the terminal. (The Claude Code inside VS Code is built into the extension, and other apps can't use it.)

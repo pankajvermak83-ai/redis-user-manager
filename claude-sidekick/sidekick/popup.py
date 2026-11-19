@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
 
-from .attachments import Attachment, AttachmentError, attachment_from_path, save_to_temp_file
+from .attachments import Attachment, AttachmentError, attachment_from_path, is_pdf, save_to_temp_file
 from .capture import Capture, read_clipboard
 from .claude_client import AskError, AskResult, Conversation
 from . import services
@@ -37,6 +37,18 @@ def _ask_worker(events: queue.Queue, rid: int, client, content: object,
     except Exception:
         log.exception("Unexpected error while asking Claude")
         events.put((rid, "error", AskError(_UNEXPECTED)))
+
+
+def _read_worker(events: queue.Queue, rid: int, path: str, max_edge: int) -> None:
+    """Runs on a background thread: open a file to attach (a big PDF's
+    text can take a few seconds to read)."""
+    try:
+        events.put((rid, "attached", attachment_from_path(path, max_edge)))
+    except AttachmentError as e:
+        events.put((rid, "attach_error", str(e)))
+    except Exception:
+        log.exception("Reading a file to attach failed")
+        events.put((rid, "attach_error", _UNEXPECTED))
 
 
 def _count_worker(events: queue.Queue, rid: int, client, conversation: Conversation, content: object) -> None:
@@ -78,6 +90,7 @@ class Popup:
         self.last_answer = ""
 
         self._busy = False
+        self._reading = False  # reading a file to attach (not asking)
         self._request_id = 0  # replies from older requests are ignored
         self._stop = threading.Event()
         self._events: queue.Queue = queue.Queue()
@@ -335,6 +348,19 @@ class Popup:
         path = self.app.dialogs.open_file(self.win)
         if not path:
             return
+        if is_pdf(path):
+            # A big PDF is read for its text, which can take a few seconds:
+            # do it in the background so the window keeps working.
+            self._busy = self._reading = True
+            self._request_id += 1
+            self._stop = threading.Event()
+            self._set_status("Reading the PDF...")
+            self._update_controls()
+            threading.Thread(target=_read_worker, daemon=True, args=(
+                self._events, self._request_id, path, self.app.settings.max_image_edge)).start()
+            if self._pump_job is None:
+                self._pump()
+            return
         try:
             self.attachment = attachment_from_path(path, self.app.settings.max_image_edge)
         except AttachmentError as e:
@@ -493,6 +519,14 @@ class Popup:
                     self._append_answer(payload)
                 elif kind == "count":
                     self._on_counted(payload)
+                elif kind == "attached":
+                    self._reading = False
+                    self.attachment = payload
+                    self._finish("")
+                elif kind == "attach_error":
+                    self._reading = False
+                    self._finish("")
+                    self.app.dialogs.error(self.win, "Cannot attach this file", payload)
                 elif kind == "done":
                     self._on_done(payload)
                 elif kind == "error":
@@ -563,7 +597,7 @@ class Popup:
         """Stop listening to the current request (if any)."""
         self._stop.set()
         self._request_id += 1
-        self._busy = False
+        self._busy = self._reading = False
         if self._pump_job is not None:
             try:
                 self.win.after_cancel(self._pump_job)
@@ -574,7 +608,11 @@ class Popup:
     def on_stop(self) -> None:
         if not self._busy:
             return
+        reading, self._reading = self._reading, False
         self._abandon_request()
+        if reading:
+            self._finish("Stopped reading the file.")
+            return
         self._append_answer("\n[Stopped]")
         self._finish("Stopped.")
 

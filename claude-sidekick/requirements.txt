@@ -2,3 +2,4 @@
 anthropic>=2.8,<3   # Anthropic's official library for talking to Claude
 pillow>=10          # reads pictures (screen snips) from the clipboard
 keyring>=25         # keeps your API key in Windows Credential Manager
+pypdf>=5,<8         # reads the text of big PDFs

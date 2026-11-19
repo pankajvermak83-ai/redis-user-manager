@@ -444,3 +444,70 @@ def test_settings_saved_by_windows_tools_with_a_bom_mark(tmp_path):
     path.write_bytes("\ufeff".encode("utf-8") + json.dumps({"send_to": "api", "provider": "ollama"}).encode("utf-8"))
     loaded = load_settings(path)
     assert (loaded.send_to, loaded.provider) == ("api", "ollama")
+
+
+# ---- PDFs: sent whole when they fit, as their text when they are too big
+
+def test_a_pdf_is_sent_whole_when_it_fits(tmp_path):
+    from pdf_maker import make_pdf
+    pdf = tmp_path / "report.pdf"
+    make_pdf(pdf, ["Hello", "World"])
+    att = attachment_from_path(str(pdf), 1920)
+    assert att.kind == "pdf" and att.detail.endswith(", 2 pages")
+
+
+def test_a_big_pdf_is_sent_as_its_text(tmp_path, monkeypatch):
+    from pdf_maker import make_pdf
+    from sidekick import attachments
+    monkeypatch.setattr(attachments, "MAX_PDF_BYTES", 100)  # this small file now counts as big
+    pdf = tmp_path / "manual.pdf"
+    make_pdf(pdf, ["Chapter one", "", "Chapter three"])  # page 2 has no text
+    att = attachment_from_path(str(pdf), 1920)
+    assert att.kind == "text" and att.path == str(pdf)
+    assert att.text() == "--- Page 1 ---\nChapter one\n\n--- Page 3 ---\nChapter three"
+    assert att.detail.endswith("PDF, text of all 3 pages")
+    assert att.describe().startswith("Text of PDF: manual.pdf (")
+
+
+def test_a_pdf_with_too_many_pages_is_sent_as_its_text(tmp_path, monkeypatch):
+    from pdf_maker import make_pdf
+    from sidekick import attachments
+    monkeypatch.setattr(attachments, "MAX_PDF_PAGES", 2)
+    pdf = tmp_path / "book.pdf"
+    make_pdf(pdf, ["One", "Two", "Three"])
+    assert attachment_from_path(str(pdf), 1920).kind == "text"
+
+
+def test_only_as_much_pdf_text_as_fits(tmp_path, monkeypatch):
+    from pdf_maker import make_pdf
+    from sidekick import attachments
+    monkeypatch.setattr(attachments, "MAX_PDF_BYTES", 100)
+    monkeypatch.setattr(attachments, "MAX_PDF_TEXT_CHARS", 60)
+    pdf = tmp_path / "long.pdf"
+    make_pdf(pdf, ["Page text number one", "Page text number two", "Page text number three"])
+    att = attachment_from_path(str(pdf), 1920)
+    assert att.text() == "--- Page 1 ---\nPage text number one"
+    assert att.detail.endswith("text of pages 1-1 of 3")
+
+
+def test_a_big_scanned_pdf_is_explained(tmp_path, monkeypatch):
+    from pdf_maker import make_pdf
+    from sidekick import attachments
+    monkeypatch.setattr(attachments, "MAX_PDF_BYTES", 100)
+    pdf = tmp_path / "scan.pdf"
+    make_pdf(pdf, ["", ""])
+    with pytest.raises(AttachmentError) as caught:
+        attachment_from_path(str(pdf), 1920)
+    assert "no text Sidekick can read" in str(caught.value) and "Win+Shift+S" in str(caught.value)
+
+
+def test_a_big_pdf_without_the_pdf_library(tmp_path, monkeypatch):
+    from pdf_maker import make_pdf
+    from sidekick import attachments
+    monkeypatch.setattr(attachments, "MAX_PDF_BYTES", 100)
+    monkeypatch.setattr(attachments, "_pypdf", lambda: None)
+    pdf = tmp_path / "big.pdf"
+    make_pdf(pdf, ["Some text"])
+    with pytest.raises(AttachmentError) as caught:
+        attachment_from_path(str(pdf), 1920)
+    assert "needs the pypdf library" in str(caught.value)

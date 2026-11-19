@@ -205,7 +205,11 @@ documentation, for example `https://api.openai.com/v1`, then fill in
   hotkey. The picture is sent with the question and answered right away.
   Claude Code, the Claude API and the Claude app read pictures and PDFs;
   Gemini, Ollama and other services read pictures if the model can.
-- **Files:** click **Attach file...** (PDF, picture or text file).
+- **Files:** click **Attach file...** (PDF, picture or text file). A PDF
+  over 20 MB or 100 pages is too big for Claude to take whole, so Sidekick
+  reads its text on your PC and sends that instead (up to about 200,000
+  characters, with page numbers). Scanned PDFs have no text: snip the page
+  you need instead.
 - **Stop:** click **Stop** at any time. **Esc** closes the window.
 
 ## What Sidekick does with your keyboard and clipboard
@@ -322,7 +326,7 @@ sidekick/
   attachments.py       pictures, PDFs and text files
   costs.py             cost estimates, your prices, the daily total
   platform_win.py      Windows: hotkey, copy and paste keys, opening apps
-tests/                 187 tests
+tests/                 194 tests
 ```
 
 Run the tests from the `tests` folder:
