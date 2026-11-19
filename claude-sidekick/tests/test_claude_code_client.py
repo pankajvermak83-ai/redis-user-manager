@@ -13,7 +13,7 @@ from sidekick.claude_code_client import (
     NO_PICTURES, NOT_INSTALLED, NOT_SIGNED_IN, ClaudeCodeClient, plan_only_environment,
 )
 from sidekick.config import Settings
-from sidekick.prompts import SYSTEM_PROMPT
+from sidekick.prompts import TEXT_ONLY_SYSTEM_PROMPT
 
 FAKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_claude.py")
 
@@ -50,7 +50,8 @@ def test_answer_streams_from_claude_code(run, tmp_path):
     assert args[args.index("--tools") + 1] == ""  # every tool switched off
     assert args[args.index("--max-turns") + 1] == "1"
     instructions = args[args.index("--system-prompt-file") + 1]
-    assert open(instructions, encoding="utf-8").read() == SYSTEM_PROMPT
+    assert open(instructions, encoding="utf-8").read() == TEXT_ONLY_SYSTEM_PROMPT
+    assert "Win+Shift+S" not in TEXT_ONLY_SYSTEM_PROMPT  # Claude Code can't take a snip
     assert "--model" not in args
 
 

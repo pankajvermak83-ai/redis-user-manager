@@ -64,6 +64,13 @@ TIP = (
     "Tip: copy some text (Ctrl+C) or snip part of the screen (Win+Shift+S), "
     "then press the hotkey. You can also just type a question."
 )
+# For Claude Code, which reads text only here.
+TEXT_TIP = "Tip: select or copy some text (Ctrl+C), then press the hotkey. You can also just type a question."
+
+
+def tip_for(settings: Settings) -> str:
+    text_only = settings.send_to == "api" and settings.provider == "claude_code"
+    return TEXT_TIP if text_only else TIP
 
 
 def read_clipboard(
@@ -129,7 +136,7 @@ def capture_context(
 
     capture = Capture(window=window)
     if not watch.is_fresh(settings.clipboard_fresh_seconds):
-        capture.note = TIP
+        capture.note = tip_for(settings)
         return capture
     if platform.clipboard_marked_private():
         capture.note = (
@@ -140,7 +147,7 @@ def capture_context(
 
     text, attachment, note = read_clipboard(read_text, read_media, settings)
     if text and text == watch.own_text:
-        capture.note = TIP  # that is just the answer Sidekick copied earlier
+        capture.note = tip_for(settings)  # that is just the answer Sidekick copied earlier
         return capture
     capture.text, capture.attachment, capture.note = text, attachment, note
     return capture

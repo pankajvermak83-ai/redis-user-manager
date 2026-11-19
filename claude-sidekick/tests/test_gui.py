@@ -895,11 +895,17 @@ def test_one_key_answer_with_claude_code(tmp_path, monkeypatch, api):
         assert h.app.settings.provider == "claude_code"
         assert "no API key, no extra bill" in h.label(h.app.key_label)
         press_and_wait(h)
-        assert h.popup.answer_text().endswith("Claude Code says hi.")
+        assert h.popup.answer_text() == "You asked: Help with this\n\nClaude Code says hi."
         assert h.label(h.popup.status_label) == "Claude Code (your Claude plan)"
         prompt = json.loads(log.read_text().splitlines()[0])["stdin"]
         assert "Ths sentense has erors." in prompt and SMART_PROMPT in prompt
         assert api.requests == []
+        # a quick button: its name is shown, and its full instruction is sent
+        h.popup.quick_buttons[1].invoke()  # Fix
+        h.wait(lambda: not h.popup._busy)
+        assert "\n\nYou asked: Fix\n\nClaude Code says hi." in h.popup.answer_text()
+        assert json.loads(log.read_text().splitlines()[1])["stdin"].endswith(
+            "Find what is wrong here and give me the corrected version.")
 
 
 def test_another_service_with_your_own_prices(tmp_path, monkeypatch, api, compat):

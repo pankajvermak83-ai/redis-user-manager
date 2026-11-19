@@ -281,7 +281,8 @@ class SidekickApp:
             if snip and not services.reads_pictures(s):
                 self.popup.set_note("This picture was not sent. " + NO_PICTURES)
             else:
-                self.popup.auto_ask(HOTKEY_ACTIONS[s.hotkey_action][1])
+                label, prompt = HOTKEY_ACTIONS[s.hotkey_action]
+                self.popup.auto_ask(prompt, label.split(" (")[0])
 
     # ------------------------------------------------------------ Claude
 

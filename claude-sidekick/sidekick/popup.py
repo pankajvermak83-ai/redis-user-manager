@@ -192,7 +192,8 @@ class Popup:
         for i, action in enumerate(self.app.settings.quick_actions):
             button = ttk.Button(
                 self.quick_row, text=action["label"],
-                command=lambda prompt=action["prompt"]: self.on_ask(prompt, quick=True),
+                command=lambda prompt=action["prompt"], label=action["label"]: self.on_ask(
+                    prompt, quick=True, label=label),
             )
             button.grid(row=0, column=i, padx=(0, 6))
             self.quick_buttons.append(button)
@@ -361,7 +362,9 @@ class Popup:
 
     # ---------------------------------------------------------------- ask
 
-    def on_ask(self, question: str | None = None, quick: bool = False) -> None:
+    def on_ask(self, question: str | None = None, quick: bool = False, label: str = "") -> None:
+        """`label`: the button's name, shown above the answer instead of its
+        full instruction (for the quick buttons and the one-key hotkey)."""
         if self._busy:
             return
         app = self.app
@@ -429,7 +432,7 @@ class Popup:
 
         # Show the question above its answer (the question box is cleared later).
         lead = "\n\n" if self.answer_text().strip() else ""
-        self._append_answer(f"{lead}You asked: {question}\n\n")
+        self._append_answer(f"{lead}You asked: {label or question}\n\n")
 
         self._busy = True
         self._asked_with = mode
@@ -579,9 +582,9 @@ class Popup:
         self.open(Capture(window=self.capture.window, private=self.capture.private,
                           note="Started a new question. Paste or attach what you want to ask about."))
 
-    def auto_ask(self, prompt: str) -> None:
+    def auto_ask(self, prompt: str, label: str = "") -> None:
         """One-key mode: ask right away, as if a quick button was clicked."""
-        self.on_ask(prompt, quick=True)
+        self.on_ask(prompt, quick=True, label=label)
 
     def on_paste_back(self) -> None:
         if self.last_answer and not self._busy:

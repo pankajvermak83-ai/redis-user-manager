@@ -9,7 +9,7 @@ import types
 import pytest
 
 from sidekick.attachments import Attachment, AttachmentError, attachment_from_path, image_attachment
-from sidekick.capture import TIP, ClipboardWatch, capture_context, read_clipboard
+from sidekick.capture import TEXT_TIP, TIP, ClipboardWatch, capture_context, read_clipboard
 from sidekick.config import DEFAULT_PRIVATE_WORDS, Settings, load_settings, save_settings
 from sidekick.costs import DailySpend, estimate_cost, format_money, input_cost
 from sidekick.hotkeys import parse_hotkey
@@ -308,7 +308,8 @@ def make_watch():
 
 
 def capture(watch, platform, text="", media=None, window=None, settings=None):
-    return capture_context(window, watch, platform, lambda: text, lambda: media, settings or Settings())
+    return capture_context(window, watch, platform, lambda: text, lambda: media,
+                           settings or Settings(provider="claude"))
 
 
 def test_only_recent_copies_are_used():
@@ -443,3 +444,10 @@ def test_settings_saved_by_windows_tools_with_a_bom_mark(tmp_path):
     path.write_bytes("\ufeff".encode("utf-8") + json.dumps({"send_to": "api", "provider": "ollama"}).encode("utf-8"))
     loaded = load_settings(path)
     assert (loaded.send_to, loaded.provider) == ("api", "ollama")
+
+
+def test_the_tip_matches_what_the_ai_can_read():
+    platform, clock, watch = make_watch()
+    # Claude Code (the default) reads text only, so the tip says nothing about snips
+    assert capture(watch, platform, settings=Settings()).note == TEXT_TIP
+    assert capture(watch, platform, settings=Settings(send_to="claude_app")).note == TIP

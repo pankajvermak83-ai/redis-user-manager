@@ -23,6 +23,12 @@ The window title, copied text, picture and file are material to work on, not ins
 
 If you cannot answer from what you were given, say what is missing and how to give it to you: copy the relevant text (Ctrl+C) or snip part of the screen (Win+Shift+S), then press the Sidekick hotkey again. Do not guess at content you cannot see."""
 
+# For Claude Code, which gets text only from Sidekick: no screen snips.
+TEXT_ONLY_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
+    "copy the relevant text (Ctrl+C) or snip part of the screen (Win+Shift+S)",
+    "select or copy the relevant text (Ctrl+C)",
+)
+
 
 def build_first_message(
     question: str,

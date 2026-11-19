@@ -36,7 +36,7 @@ from typing import Callable
 
 from .claude_client import AskError, AskResult, Conversation
 from .config import config_dir
-from .prompts import SYSTEM_PROMPT
+from .prompts import TEXT_ONLY_SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ class ClaudeCodeClient:
         prompt = build_prompt(conversation, new_message)
         self._workdir.mkdir(parents=True, exist_ok=True)
         prompt_file = self._workdir / "sidekick-instructions.txt"
-        prompt_file.write_text(SYSTEM_PROMPT, encoding="utf-8")
+        prompt_file.write_text(TEXT_ONLY_SYSTEM_PROMPT, encoding="utf-8")
 
         run = self._run(prompt_file, prompt, on_text, should_stop)
         if self._safe_mode and run.final is None and "--safe-mode" in run.errors and "unknown option" in run.errors.lower():
