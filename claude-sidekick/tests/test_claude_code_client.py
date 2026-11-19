@@ -103,6 +103,9 @@ def test_pictures_are_not_sent_to_claude_code(run):
 
 def test_not_installed(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))  # no `claude` anywhere
+    # ...not even where Anthropic's Windows installer puts it (~\.local\bin)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     c = ClaudeCodeClient(Settings(), workdir=tmp_path / "room")
     with pytest.raises(AskError) as caught:
         c.ask(Conversation(), "hi", lambda _t: None)
