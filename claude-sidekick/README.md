@@ -121,6 +121,15 @@ pick it, follow its steps below, and click **Save**.
 **6. Optional: start it automatically.** Double-click
 **`3-Start-With-Windows.bat`**.
 
+**Updating to a new version.** If Sidekick was downloaded with Git (the
+install guide does this), double-click **`4-Update-Sidekick.bat`**. It
+stops Sidekick, downloads the newest version, updates the libraries only
+when they changed, and starts Sidekick again, usually in a few seconds.
+Your settings stay as they are. For a quicker start, right-click it and
+choose **Send to > Desktop (create shortcut)**. If you downloaded a ZIP
+instead, install once with the install guide; after that, updates take
+one double-click.
+
 ### Setting up each AI service
 
 **Claude Code (your Claude plan):**

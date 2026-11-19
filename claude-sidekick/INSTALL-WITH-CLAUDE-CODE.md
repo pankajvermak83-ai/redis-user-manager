@@ -104,7 +104,7 @@ STEP 10 (optional, ask me first) - Run Sidekick's automatic tests on this PC. Wa
   ..\.venv\Scripts\python.exe -m pytest -q
 If any test fails, show me the failure output.
 
-At the end, give me a short summary: what was installed and where, which checks passed, and how to use Sidekick every day (select text, press Ctrl+Shift+Space, read the answer, then click Paste back or Copy answer).
+At the end, give me a short summary: what was installed and where, which checks passed, how to use Sidekick every day (select text, press Ctrl+Shift+Space, read the answer, then click Paste back or Copy answer), and how to update it later (double-click 4-Update-Sidekick.bat in the app folder).
 ```
 
 ## Want a different AI?
