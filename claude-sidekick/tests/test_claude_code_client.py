@@ -10,10 +10,10 @@ import pytest
 from sidekick.attachments import Attachment
 from sidekick.claude_client import AskError, Conversation
 from sidekick.claude_code_client import (
-    NO_PICTURES, NOT_INSTALLED, NOT_SIGNED_IN, ClaudeCodeClient, plan_only_environment,
+    NOT_INSTALLED, NOT_SIGNED_IN, ClaudeCodeClient, plan_only_environment,
 )
 from sidekick.config import Settings
-from sidekick.prompts import TEXT_ONLY_SYSTEM_PROMPT
+from sidekick.prompts import SYSTEM_PROMPT
 
 FAKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_claude.py")
 
@@ -47,11 +47,11 @@ def test_answer_streams_from_claude_code(run, tmp_path):
                  "--no-session-persistence", "--safe-mode"):
         assert flag in args
     assert args[args.index("--output-format") + 1] == "stream-json"
+    assert args[args.index("--input-format") + 1] == "stream-json"  # so pictures can go with it
     assert args[args.index("--tools") + 1] == ""  # every tool switched off
     assert args[args.index("--max-turns") + 1] == "1"
     instructions = args[args.index("--system-prompt-file") + 1]
-    assert open(instructions, encoding="utf-8").read() == TEXT_ONLY_SYSTEM_PROMPT
-    assert "Win+Shift+S" not in TEXT_ONLY_SYSTEM_PROMPT  # Claude Code can't take a snip
+    assert open(instructions, encoding="utf-8").read() == SYSTEM_PROMPT
     assert "--model" not in args
 
 
@@ -94,12 +94,21 @@ def test_stop_button_ends_claude_code(run):
     assert time.monotonic() - started < 3  # Claude Code was stopped, not waited for
 
 
-def test_pictures_are_not_sent_to_claude_code(run):
+def test_pictures_and_pdfs_go_to_claude_code(run):
     picture = Attachment("image", "", "image/png", b"png")
     content = [picture.content_block(), {"type": "text", "text": "What is this?"}]
-    with pytest.raises(AskError) as caught:
-        run(content)
-    assert str(caught.value) == NO_PICTURES
+    convo = Conversation()
+    result, _, (call,) = run(content, convo=convo)
+    assert result.text == "Claude Code says hi."
+    assert call["media"] == ["image"] and call["stdin"] == "What is this?"
+    # Each run starts fresh, so a follow-up sends the picture again with the conversation.
+    _, _, calls = run("And the colour?", convo=convo)
+    assert calls[-1]["media"] == ["image"]
+    assert calls[-1]["stdin"].endswith("My next message:\nAnd the colour?")
+
+    pdf = Attachment("pdf", "report.pdf", "application/pdf", b"%PDF-1.4")
+    _, _, calls = run([pdf.content_block(), {"type": "text", "text": "Summarize it"}])
+    assert calls[-1]["media"] == ["document"]
 
 
 def test_not_installed(tmp_path, monkeypatch):

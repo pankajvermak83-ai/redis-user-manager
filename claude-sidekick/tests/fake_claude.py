@@ -11,14 +11,23 @@ import sys
 import time
 
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
-prompt = sys.stdin.read()
+raw = sys.stdin.read()
+prompt, media = raw, []
+if "stream-json" in sys.argv[sys.argv.index("--input-format") + 1:][:1]:
+    # one user message per line: {"type": "user", "message": {"role": "user", "content": [...]}}
+    message = json.loads(raw.splitlines()[0])
+    assert message["type"] == "user" and message["message"]["role"] == "user"
+    content = message["message"]["content"]
+    prompt = "\n\n".join(b["text"] for b in content if b["type"] == "text")
+    media = [b["type"] for b in content if b["type"] != "text"]
 log = os.environ.get("FAKE_CLAUDE_LOG")
 if log:
     with open(log, "a", encoding="utf-8") as f:
         names = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
                  "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")
         billing = {k: v for k, v in os.environ.items() if k.upper() in names}
-        f.write(json.dumps({"args": sys.argv[1:], "stdin": prompt, "cwd": os.getcwd(), "billing_env": billing}) + "\n")
+        f.write(json.dumps({"args": sys.argv[1:], "stdin": prompt, "media": media, "cwd": os.getcwd(),
+                            "billing_env": billing}) + "\n")
 
 
 def say(obj):

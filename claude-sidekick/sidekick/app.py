@@ -22,7 +22,7 @@ from .handoff import TARGET_NAMES, plan_handoff
 from .hotkeys import Hotkey, parse_hotkey
 from .platform_base import Platform, WindowInfo, get_platform
 from .popup import Dialogs, Popup
-from .claude_code_client import NO_PICTURES, find_claude
+from .claude_code_client import find_claude
 from .privacy import is_private_window
 from .settings_ui import SettingsDialog
 
@@ -108,7 +108,7 @@ class SidekickApp:
         press = f"Press {key}" if key else "Click the Ask now button below"
         inside = s.send_to == "api"
         one_key = s.instant and s.hotkey_action != "open"
-        snip = " (or snip the screen with Win+Shift+S)" if services.reads_pictures(s) else ""
+        snip = " (or snip the screen with Win+Shift+S)"
         if one_key:
             action = HOTKEY_ACTIONS[s.hotkey_action][0].split(" (")[0]
             result = ("The answer appears in a small window. Copy it, or click Paste back."
@@ -278,11 +278,8 @@ class SidekickApp:
         snip = capture.attachment is not None and capture.attachment.kind == "image" and not capture.attachment.path
         has_content = bool(capture.text.strip() or capture.attachment)
         if s.instant and s.hotkey_action != "open" and has_content and (copied or snip):
-            if snip and not services.reads_pictures(s):
-                self.popup.set_note("This picture was not sent. " + NO_PICTURES)
-            else:
-                label, prompt = HOTKEY_ACTIONS[s.hotkey_action]
-                self.popup.auto_ask(prompt, label.split(" (")[0])
+            label, prompt = HOTKEY_ACTIONS[s.hotkey_action]
+            self.popup.auto_ask(prompt, label.split(" (")[0])
 
     # ------------------------------------------------------------ Claude
 

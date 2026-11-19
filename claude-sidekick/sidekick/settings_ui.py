@@ -64,7 +64,15 @@ class SettingsDialog:
         self.win = tk.Toplevel(app.root)
         self.win.title("Sidekick Settings")
         self.win.resizable(False, False)
-        self.win.attributes("-topmost", True)
+        # Not "always on top": on Windows, a dropdown list then opens behind
+        # this window, so nothing can be picked from it. The Ask window is
+        # moved out of the way instead, so it can't cover this one.
+        popup = getattr(app, "popup", None)
+        if popup is not None:
+            try:
+                popup.win.attributes("-topmost", False)
+            except tk.TclError:
+                pass
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         self.win.bind("<Escape>", lambda _e: self.close())
 
@@ -87,10 +95,15 @@ class SettingsDialog:
         ttk.Button(buttons, text="Cancel", command=self.close).grid(row=0, column=1, padx=(6, 0))
 
         self._show_provider(self._provider, first=True)
+        self._update_mode_note()
         if reason:
             self.tabs.select(ai)
         self.win.lift()
+        self.win.focus_force()
         (self.key_entry if reason and self._provider in KEY_INFO else self.send_to_box).focus_set()
+        # A click anywhere on a list box opens its list (not only on the arrow).
+        for box in _comboboxes(self.win):
+            box.bind("<Button-1>", _open_list, add="+")
 
     # ------------------------------------------------------------ layout
 
@@ -114,9 +127,11 @@ class SettingsDialog:
         self.send_to_box = ttk.Combobox(frame, state="readonly", width=56,
                                         values=[SEND_TO_LABELS[t] for t in self._send_to_ids])
         self.send_to_box.current(self._send_to_ids.index(s.send_to) if s.send_to in SEND_TO_CHOICES else 0)
+        self.send_to_box.bind("<<ComboboxSelected>>", lambda _e: self._update_mode_note())
         add("Send questions to:", self.send_to_box, pad=0)
-        note("The Claude app and website use your Claude plan: Claude opens with the question filled in "
-             "and you press Enter there. To see answers right here instead, pick \"Answer inside Sidekick\".")
+        note("The Claude app and website open with the question filled in, and you press Enter there. "
+             "\"Answer inside Sidekick\" needs no Enter: the answer appears right away, and with Claude Code "
+             "it also uses your Claude plan, pictures and PDFs included.")
 
         self.instant_var = tk.BooleanVar(value=s.instant)
         ttk.Checkbutton(frame, variable=self.instant_var,
@@ -148,9 +163,8 @@ class SettingsDialog:
 
     def _build_ai(self, frame, s) -> None:
         frame.columnconfigure(1, weight=1)
-        ttk.Label(frame, wraplength=500, justify="left",
-                  text="Used when \"Send questions to\" is \"Answer inside Sidekick\". You can switch at any "
-                       "time, for example if prices change.").grid(row=0, column=0, columnspan=2, sticky="w")
+        self.mode_note = ttk.Label(frame, wraplength=500, justify="left", text="")
+        self.mode_note.grid(row=0, column=0, columnspan=2, sticky="w")
         self._provider_ids = list(PROVIDERS)
         self.provider_box = ttk.Combobox(frame, state="readonly", width=52,
                                          values=[PROVIDER_LABELS[p] for p in self._provider_ids])
@@ -178,8 +192,9 @@ class SettingsDialog:
         # Claude Code
         f = self.service_frames["claude_code"]
         self.code_model_var = tk.StringVar(value=s.claude_code_model or "default")
-        field(f, 0, "Model:", ttk.Combobox(f, textvariable=self.code_model_var, width=40,
-                                          values=["default" if m == "" else m for m in CLAUDE_CODE_MODELS]))
+        self.code_model_box = ttk.Combobox(f, textvariable=self.code_model_var, width=40,
+                                           values=["default" if m == "" else m for m in CLAUDE_CODE_MODELS])
+        field(f, 0, "Model:", self.code_model_box)
         found = find_claude(s.claude_code_command)
         self.code_status = tip(f, 1, (
             f"Claude Code was found ({found}). It must be signed in with your Claude account "
@@ -190,7 +205,7 @@ class SettingsDialog:
                   "(shared with Claude chat and Claude Code); there is no extra bill unless you turned on "
                   "usage credits in Claude's settings. Sidekick removes any API key when it runs Claude Code, "
                   "so your plan is used. Tools are off and your own CLAUDE.md, hooks and plugins are not "
-                  "loaded (safe mode), so it only answers. Text only.")
+                  "loaded (safe mode), so it only answers. Pictures and PDFs work too.")
 
         # Claude API
         f = self.service_frames["claude"]
@@ -277,6 +292,17 @@ class SettingsDialog:
     def close(self) -> None:
         if self.alive:
             self.win.destroy()
+
+    def _update_mode_note(self) -> None:
+        """Say whether the AI service and model below are in use right now."""
+        if self._send_to_ids[self.send_to_box.current()] == "api":
+            text = ("Pick the AI service first, then its model below. You can switch at any time, "
+                    "for example if prices change.")
+        else:
+            text = ("Not in use now: questions open in the Claude app or website, which uses its own "
+                    "model. To use the AI service and model below, set \"Send questions to\" on the "
+                    "General tab to \"Answer inside Sidekick\".")
+        self.mode_note.configure(text=text)
 
     def _selected_provider(self) -> str:
         return self._provider_ids[self.provider_box.current()]
@@ -445,3 +471,29 @@ class SettingsDialog:
 
 def _number(value: float) -> str:
     return f"{value:g}"
+
+
+def _comboboxes(widget) -> list:
+    found = []
+    for child in widget.winfo_children():
+        if isinstance(child, ttk.Combobox):
+            found.append(child)
+        found.extend(_comboboxes(child))
+    return found
+
+
+def _open_list(event) -> None:
+    """Open a list box's list when its text part is clicked. Read-only boxes
+    already do this by themselves; boxes you can also type in only open from
+    their arrow, which is easy to miss."""
+    box = event.widget
+    if str(box.cget("state")) == "readonly":
+        return
+    box.after_idle(lambda: _post(box))
+
+
+def _post(box) -> None:
+    try:
+        box.tk.call("ttk::combobox::Post", box)
+    except tk.TclError:
+        pass  # this Tk has no such command: the arrow still works

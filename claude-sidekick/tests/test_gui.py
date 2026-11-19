@@ -1082,18 +1082,20 @@ def test_daily_limit_does_not_block_free_services(tmp_path, monkeypatch, api, co
         assert h.popup.answer_text().endswith("Free answer.")
 
 
-def test_a_snip_is_not_sent_to_claude_code(tmp_path, monkeypatch, api):
+def test_a_snip_is_answered_by_claude_code(tmp_path, monkeypatch, api):
     log = tmp_path / "claude-calls.jsonl"
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
     monkeypatch.setattr("sidekick.claude_code_client.config_dir", lambda: tmp_path / "sidekick")
     monkeypatch.setattr("sidekick.app.find_claude", lambda configured="": "claude")
-    with started(tmp_path, monkeypatch, api) as h:  # the defaults: Claude Code, one-key mode
-        assert "Win+Shift+S" not in h.label(h.app.howto_label)
+    with started(tmp_path, monkeypatch, api, claude_code_model="haiku") as h:  # Claude Code, one-key mode
+        assert "Win+Shift+S" in h.label(h.app.howto_label)
         h.clear_clipboard()
         h.platform.media = Image.new("RGB", (40, 30), "white")
         press_and_wait(h, selection=None)
-        assert h.label(h.popup.note_label).startswith("This picture was not sent. Claude Code")
-        assert h.popup.answer_text() == "" and not log.exists()
+        call = json.loads(log.read_text().splitlines()[0])
+        assert call["media"] == ["image"]
+        assert h.popup.answer_text().endswith("Claude Code says hi.")
+        assert h.label(h.popup.status_label) == "Claude Code · haiku (your Claude plan)"
 
 
 def test_follow_up_after_changing_the_ai_service(tmp_path, monkeypatch, api, compat):
@@ -1113,3 +1115,30 @@ def test_the_window_names_the_service_that_gets_the_text(tmp_path, monkeypatch, 
                  gemini_base_url=compat.base_url) as h:
         h.press_hotkey(WORD)
         assert h.label(h.popup.send_frame) == "What will be sent to Google Gemini (you can edit or delete it)"
+
+
+def test_settings_lists_open_and_say_when_they_apply(tmp_path, monkeypatch, api):
+    with started(tmp_path, monkeypatch, api, send_to="claude_app") as h:
+        h.app.open_settings()
+        d = h.app.settings_dialog
+        h.pump(0.2)
+        # Not "always on top": on Windows that hides the dropdown lists behind the window.
+        assert not int(d.win.attributes("-topmost"))
+        # With questions going to the Claude app, the AI service tab says it is not in use.
+        assert h.label(d.mode_note).startswith("Not in use now")
+        d.send_to_box.current(d._send_to_ids.index("api"))
+        d.send_to_box.event_generate("<<ComboboxSelected>>")
+        assert h.label(d.mode_note).startswith("Pick the AI service first")
+        # Clicking the text part of a model box opens its list, not only its arrow.
+        d.tabs.select(1)
+        h.pump(0.2)
+        box = d.code_model_box
+        box.event_generate("<Button-1>", x=10, y=5)
+        h.pump(0.2)
+        popdown = box.tk.call("ttk::combobox::PopdownWindow", box)
+        try:
+            assert int(box.tk.call("winfo", "ismapped", popdown)) == 1
+        finally:
+            box.tk.call("ttk::combobox::Unpost", box)
+            h.pump(0.1)
+        d.close()

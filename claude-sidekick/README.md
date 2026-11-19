@@ -52,9 +52,10 @@ question.
 **Claude Code** (the default)
 - Cost: included in a paid Claude plan (Pro or higher). No API key.
 - Privacy: your Claude account's privacy settings apply.
-- Good to know: text only. Needs Claude Code installed for the terminal.
-  Answers count toward your plan's usage limits, which Claude chat and
-  Claude Code share (see "Billing with Claude Code" below).
+- Good to know: pictures, screen snips and PDFs work. Needs Claude Code
+  installed for the terminal. Answers count toward your plan's usage
+  limits, which Claude chat and Claude Code share (see "Billing with
+  Claude Code" below).
 
 **Claude API**
 - Cost: pay per use. Haiku 5.5 is about 0.04 cents a question; Opus 5.5
@@ -83,7 +84,9 @@ Free limits and prices change often, so check each service's own page.
 
 Sidekick can also skip its own window and **open the question in the
 Claude app or on claude.ai** instead (Settings > General > Send questions
-to). That always uses your Claude plan, and you press Enter there.
+to). That also uses your Claude plan, but you have to press Enter there:
+Claude's links can only fill in the question. With "Answer inside
+Sidekick" and Claude Code, nothing needs pressing.
 
 ## What you need
 
@@ -199,10 +202,9 @@ documentation, for example `https://api.openai.com/v1`, then fill in
   **Improve writing** or **Draft reply** in the window.
 - **Follow-up questions:** type them in the window and press Enter.
 - **Screen snips:** press Win+Shift+S, drag over an area, then press the
-  hotkey. The picture is sent with the question. Claude Code can't read
-  pictures, so with Claude Code Sidekick keeps the picture and says so;
-  the Claude app and the other services can read them (if the model
-  supports it).
+  hotkey. The picture is sent with the question and answered right away.
+  Claude Code, the Claude API and the Claude app read pictures and PDFs;
+  Gemini, Ollama and other services read pictures if the model can.
 - **Files:** click **Attach file...** (PDF, picture or text file).
 - **Stop:** click **Stop** at any time. **Esc** closes the window.
 

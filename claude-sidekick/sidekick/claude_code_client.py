@@ -13,8 +13,9 @@ scripted mode, `claude -p`, like this:
   * API-key settings are removed from its environment: Anthropic's docs say
     that in this mode an ANTHROPIC_API_KEY, if present, is always used and
     billed per use, even when you are signed in with your Claude plan;
-  * the question goes in through stdin, and the answer streams back as JSON
-    lines (--output-format stream-json --include-partial-messages).
+  * the question goes in through stdin as one JSON message, so pictures and
+    PDFs can go with it (--input-format stream-json), and the answer streams
+    back as JSON lines (--output-format stream-json --include-partial-messages).
 
 Sidekick never touches your Claude login itself: Claude Code does that.
 """
@@ -36,7 +37,7 @@ from typing import Callable
 
 from .claude_client import AskError, AskResult, Conversation
 from .config import config_dir
-from .prompts import TEXT_ONLY_SYSTEM_PROMPT
+from .prompts import SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
 
@@ -69,12 +70,6 @@ def plan_only_environment(environ: dict | None = None) -> dict:
     return env
 
 
-NO_PICTURES = (
-    "Claude Code (in Sidekick) answers about text only. For pictures or PDFs, choose "
-    "\"The Claude app\" or another AI service in Settings."
-)
-
-
 def find_claude(configured: str = "") -> str | None:
     """Where the `claude` command is: the path set in Settings, the PATH, or
     the folder Anthropic's Windows installer uses."""
@@ -86,18 +81,28 @@ def find_claude(configured: str = "") -> str | None:
     return None
 
 
-def plain_text(content: object) -> str:
-    """The words of a message; pictures and PDFs are not supported here."""
+def split_content(content: object) -> tuple[list[dict], str]:
+    """A message's pictures and PDFs, and its words."""
     if isinstance(content, str):
-        return content
-    texts = []
+        return [], content
+    media, texts = [], []
     for block in content if isinstance(content, list) else []:
         kind = block.get("type") if isinstance(block, dict) else None
         if kind == "text":
             texts.append(block["text"])
         elif kind in ("image", "document"):
-            raise AskError(NO_PICTURES)
-    return "\n\n".join(texts)
+            media.append(block)
+    return media, "\n\n".join(texts)
+
+
+def stdin_message(media: list[dict], prompt: str) -> str:
+    """The one line Claude Code reads from stdin: a user message in its
+    stream-json format. Pictures and PDFs go first, then the words."""
+    content = list(media) + [{"type": "text", "text": prompt}]
+    return json.dumps({
+        "type": "user", "message": {"role": "user", "content": content},
+        "parent_tool_use_id": None, "session_id": "default",
+    }) + "\n"
 
 
 def build_prompt(conversation: Conversation, new_message: str) -> str:
@@ -163,7 +168,8 @@ class ClaudeCodeClient:
 
     def _arguments(self, prompt_file: Path) -> list[str]:
         args = self._base_command() + [
-            "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+            "--include-partial-messages",
             "--system-prompt-file", str(prompt_file), "--tools", "", "--strict-mcp-config",
             "--max-turns", "1", "--no-session-persistence",
         ]
@@ -182,11 +188,14 @@ class ClaudeCodeClient:
         on_text: Callable[[str], None],
         should_stop: Callable[[], bool] = lambda: False,
     ) -> AskResult:
-        new_message = plain_text(user_content)
-        prompt = build_prompt(conversation, new_message)
+        media, new_message = split_content(user_content)
+        # Each run starts fresh, so pictures and PDFs from earlier in the
+        # conversation are sent again with the conversation so far.
+        earlier = [block for message in conversation.messages for block in message.get("media", [])]
+        prompt = stdin_message(earlier + media, build_prompt(conversation, new_message))
         self._workdir.mkdir(parents=True, exist_ok=True)
         prompt_file = self._workdir / "sidekick-instructions.txt"
-        prompt_file.write_text(TEXT_ONLY_SYSTEM_PROMPT, encoding="utf-8")
+        prompt_file.write_text(SYSTEM_PROMPT, encoding="utf-8")
 
         run = self._run(prompt_file, prompt, on_text, should_stop)
         if self._safe_mode and run.final is None and "--safe-mode" in run.errors and "unknown option" in run.errors.lower():
@@ -217,7 +226,10 @@ class ClaudeCodeClient:
         result = AskResult(text=text, stop_reason=final.get("subtype"), model=self.model)
         if not text.strip():
             result.notice = "Claude Code sent back an empty answer. Try asking again."
-        conversation.messages.append({"role": "user", "content": new_message})
+        user_message = {"role": "user", "content": new_message}
+        if media:
+            user_message["media"] = media
+        conversation.messages.append(user_message)
         conversation.messages.append({"role": "assistant", "content": text})
         return result
 

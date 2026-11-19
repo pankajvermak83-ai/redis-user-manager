@@ -35,11 +35,6 @@ def counts_spending(settings) -> bool:
     return settings.provider == "claude" or bool(settings.prices.get(settings.provider))
 
 
-def reads_pictures(settings) -> bool:
-    """False when answers come from Claude Code, which reads text only here."""
-    return settings.send_to != "api" or settings.provider != "claude_code"
-
-
 def model_name(settings) -> str:
     p = settings.provider
     return {
@@ -61,7 +56,8 @@ def short_label(settings, model: str = "") -> str:
         info = MODELS.get(model or settings.model)
         return info.short if info else (model or settings.model)
     if p == "claude_code":
-        return "Claude Code (your Claude plan)"
+        chosen = settings.claude_code_model
+        return f"Claude Code · {chosen} (your Claude plan)" if chosen else "Claude Code (your Claude plan)"
     name = "Gemini" if p == "gemini" else service_name(settings)
     return f"{name} · {model or model_name(settings)}"
 
